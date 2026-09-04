@@ -1,0 +1,52 @@
+vendor_id,vendor_name,vendor_category
+V0001,Pied Group,consulting
+V0002,Pied Partners,marketing
+V0003,Aviato Group,marketing
+V0004,Meridian Corp,software
+V0005,Globex LLC,logistics
+V0006,Initech Corp,consulting
+V0007,Prestige Partners,logistics
+V0008,Wayne Systems,logistics
+V0009,Initech Industries,logistics
+V0010,Pied LLC,facilities
+V0011,Bluth Industries,marketing
+V0012,Vehement LLC,hardware
+V0013,Wayne Ltd,marketing
+V0014,Cyberdyne Industries,facilities
+V0015,Sterling Group,marketing
+V0016,Initech Partners,hardware
+V0017,Initech Ltd,logistics
+V0018,Wayne Supplies,hardware
+V0019,Wayne Ltd,facilities
+V0020,Massive Ltd,marketing
+V0021,Pied Corp,software
+V0022,Konex Group,consulting
+V0023,Vehement Group,hardware
+V0024,Soylent Systems,logistics
+V0025,Gekko Systems,software
+V0026,Gekko Partners,hardware
+V0027,Globex Systems,software
+V0028,Initech Supplies,hardware
+V0029,Acme Systems,hardware
+V0030,Hooli Systems,logistics
+V0031,Stark Industries,facilities
+V0032,Initech Supplies,hardware
+V0033,Pied Industries,marketing
+V0034,Massive Corp,hardware
+V0035,Tyrell Corp,logistics
+V0036,Hooli Supplies,hardware
+V0037,Aviato Systems,hardware
+V0038,Prestige Partners,consulting
+V0039,Massive Corp,facilities
+V0040,Bluth Group,software
+V0041,Initech Ltd,software
+V0042,Umbrella Partners,hardware
+V0043,Meridian Systems,logistics
+V0044,Wonka Corp,consulting
+V0045,Vehement Group,consulting
+V9001, Pied Group ,consulting
+V9002, Pied Partners ,marketing
+V9003,AVIATO GROUP,marketing
+V9004,Meridian  Corp,software
+V9005, Globex LLC ,logistics
+V9006, Initech Corp ,consulting
