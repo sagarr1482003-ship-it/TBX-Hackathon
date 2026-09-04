@@ -30,19 +30,19 @@ composer, groundedness checker, export, anomaly and insights surfaces all read.
 - [ ] 1. Stage 0 — Skeleton, configuration, migrations and test harness
   **Tier: required.** Design: §4.2, §5.5, §5.1, Security considerations.
 
-  - [ ] 1.1 Scaffold the project and the Compose stack
+  - [x] 1.1 Scaffold the project and the Compose stack
     - Create `pyproject.toml` (uv; fastapi, uvicorn, pydantic v2, pydantic-settings, sqlalchemy[asyncio], asyncpg, alembic, pgvector, sqlglot, strands-agents, sse-starlette, openpyxl, httpx, PyYAML; dev: pytest, pytest-asyncio (`asyncio_mode = "auto"`), hypothesis, ruff with `select = ["E","F","I"]`)
     - Create `Dockerfile`, `.dockerignore`, `.gitignore`, `.env.example`, and `docker-compose.yml` with services `postgres` (pgvector image), `api`, and `ollama` behind a profile — one documented command brings the stack up
     - Create `app/__init__.py` and `app/main.py` as an app factory with the request-body-size ASGI middleware placed ahead of any body parser, binding to `settings.bind_host`
     - _Requirements: 32.5, 32.7, 32.16_
 
-  - [ ] 1.2 Implement the typed settings object
+  - [x] 1.2 Implement the typed settings object
     - Create `app/config.py`: a `pydantic-settings` `Settings` singleton with defaults as named module constants and `field_validator(mode="before")` coercion so a blank environment variable falls back to the default rather than failing startup
     - Cover every entry in the requirements.md Configuration Inventory and every entry in the design's "New configuration introduced by design" table, including `embedding_model`, `embedding_dim`, `schema_link_keyword_weight`/`vector_weight`, `groundedness_require_computation_record`, `answer_composer_sample_row_count`, `reviewer_evidence_sample_rows`, `anomaly_callouts_enabled`, `internal_api_token`, `bind_host`, `postgres_reader_user`/`_password`, `reader_pool_size`, `model_prices`, `role_prompt_versions`, `trace_buffer_max_events`, and the `sarvam_*` group
     - Ship the three stated deviations: `max_utterance_duration = 30`, pitch read-but-omitted for `bulbul:v3`, transcription-confidence source policy
     - _Requirements: 32.4, 10.8, 28.3, 29.3_
 
-  - [ ] 1.3 Implement the typed error taxonomy
+  - [x] 1.3 Implement the typed error taxonomy
     - Create `app/errors.py`: `TbxError` base carrying `code`, message, `abstention_reason` and `retryable`, plus every subclass in the design's Error Handling table with the exact reason-code mapping given there
     - Create `tests/unit/test_error_taxonomy.py` enumerating every `TbxError` subclass and asserting each maps either to a reason code drawn from the Requirement 18.4 enumeration or to a documented `None`, so no exception class can be added without a mapping
     - _Requirements: 18.4_
@@ -69,20 +69,20 @@ composer, groundedness checker, export, anomaly and insights surfaces all read.
 - [ ] 2. Stage 1 — Seed dataset, dataset contract and local-file ingestion
   **Tier: required.** Design: Architecture ingestion path, §4.3 (`Dataset_Manifest`), §5.2, §5.4.
 
-  - [ ] 2.1 Define the Dataset_Manifest contracts
+  - [x] 2.1 Define the Dataset_Manifest contracts
     - Create `app/schemas/manifest.py` with `ColumnSpec`, `EntitySpec`, `JoinSpec`, `MetricParameter`, `MetricDefinition`, `PaginationSpec`, `CoverageWindow`, `DataDictionarySpec` and `DatasetManifest` exactly as design §4.3
     - Add the `model_validator` that asserts every `:bind` name in every metric `sql_template` exists in that metric's `parameters`, that every required entity and column is declared, and that `source_mode` is one of `local_files`/`http_api` — a failing manifest aborts before any entity loads
     - _Requirements: 5.1, 5.2, 5.9, 4.1, 4.6, 3.6_
     - _Properties: P11_
 
-  - [ ] 2.2 Implement the Seed_Data_Generator and the seed manifest
+  - [x] 2.2 Implement the Seed_Data_Generator and the seed manifest
     - Create `scripts/seed_data.py`, `datasets/seed/manifest.yaml` and `datasets/seed/data_dictionary.csv`, emitting CSVs for vendors, accounts, transactions, vendor_payouts and reconciliation into `datasets/seed/`
     - Produce every threshold of Requirement 8.2 (≥5000 transactions, ≥200 payouts, ≥40 vendors, ≥12 consecutive months, ≥500 unreconciled, ≥20 in each other allowed status, ≥3 payouts the anomaly rule flags) **and** every edge row of Requirement 8.7 (≥50 transactions with a null in a non-key column, ≥5 vendors under ≥2 name spellings, ≥20 amounts of exactly 0, ≥20 amounts below 0) — the abstention, clarification and anomaly properties all depend on these rows existing
     - Guarantee byte-identical output for a given random seed
     - _Requirements: 8.1, 8.2, 8.3, 8.7_
     - _Properties: P12_
 
-  - [ ] 2.3 Publish the dataset contract and implement its checker
+  - [x] 2.3 Publish the dataset contract and implement its checker
     - Create `docs/dataset_contract.md` declaring per entity the required columns, types, units, allowed reconciliation status values, the referential relationships the `Metric_Layer` depends on, the inclusive coverage window, and a severity of `blocking` or `tolerable` for every rule — with null-in-non-key-column, duplicate vendor spelling, amount exactly 0 and amount below 0 all `tolerable`
     - Create `app/services/ingestion/contract.py` validating a candidate dataset against every rule before any row loads, aborting on ≥1 blocking deviation with the count and violated rules, and recording tolerable deviations in the ingestion report
     - _Requirements: 8.4, 8.5, 8.8, 8.9, 8.10_
@@ -133,20 +133,20 @@ composer, groundedness checker, export, anomaly and insights surfaces all read.
   **Gate ownership:** tasks 4.3 and 4.5 are the first of the plan's two hard gates. Both must be green
   before task 7.8 lets a model author SQL. Reordering the plan does not move this gate.
 
-  - [ ] 4.1 Build the SQL property generators
+  - [x] 4.1 Build the SQL property generators
     - Create `tests/properties/generators/sql.py` with `hostile_sql()` (stacked statements, DDL, DML, `FOR UPDATE`/`FOR SHARE`, `SELECT INTO`, `CREATE TABLE AS`, `COPY … TO`, `pg_read_file`, `pg_sleep`, `dblink`, `lo_import`, `current_setting`, unknown identifiers, join-ambiguous unqualified columns, over-maximum row limits, and comment-obfuscated variants of each), `well_formed_select()` (SELECTs over the active `Schema_KB` with joins, CTEs, grouping, ordering, set operations and allowlisted functions), and `metric_binding()` (bound `Metric_Layer` statements)
     - The pair makes Property 1 two-sided: nothing from `hostile_sql()` may be accepted, everything from `well_formed_select()` must be, which catches an over-tight allowlist as well as an over-loose one
     - _Requirements: 12.3, 12.4, 12.5, 12.11, 12.12, 12.13, 12.14_
     - _Properties: P1, P2, P33_
 
-  - [ ] 4.2 Implement the SQL_Validator
+  - [x] 4.2 Implement the SQL_Validator
     - Create `app/schemas/validation.py` (`AcceptVerdict` with `canonical_sql`, bound `parameters`, referenced tables and columns, applied row limit, intent family, validation duration; `RejectVerdict` with the design's category enumeration and `guardrail_violation` flag) and `app/services/pipeline/sql_validator.py` implementing the design's single-pass SQLGlot AST walk
     - Enforce it as an **allowlist**: statement-type check, accepted-node-type allowlist, function allowlist, row-locking and result-target rejection, schema conformance against the pinned `Schema_KB` version with unqualified-identifier resolution, declared-row-limit ceiling, default row limit injection for listing intents, parameter binding for every user-derived literal, the 100 ms budget as a guardrail violation, and `canonical_sql` regenerated from the AST so the executor never sees a model-authored string
     - Route every `Metric_Layer`-bound statement through the same validator
     - _Requirements: 12.1, 12.2, 12.3, 12.4, 12.5, 12.6, 12.7, 12.8, 12.9, 12.10, 12.11, 12.12, 12.13, 12.14, 12.15, 4.13_
     - _Properties: P1, P2_
 
-  - [ ] 4.3 Gate: get Properties 1 and 2 green
+  - [x] 4.3 Gate: get Properties 1 and 2 green
     - Create `tests/properties/test_sql_validator.py` using `hostile_sql()`, `well_formed_select()` and `metric_binding()`, tagged with the property numbers; assert no accepted candidate carries a forbidden node, function, lock or result target, and that every accepted candidate's tables and columns exist in the pinned `Schema_KB`
     - **This gate must be green before task 7.8 (`SQL_Generator`) begins** — the boundary exists before a model is allowed to author SQL
     - _Requirements: 12.1, 12.3, 12.4, 12.5, 12.6, 12.7, 12.11, 12.12, 12.13, 3.1, 3.2, 4.12_
@@ -216,12 +216,12 @@ composer, groundedness checker, export, anomaly and insights surfaces all read.
   **Gate ownership:** task 7.6 is the plan's second hard gate and must be green before task 7.7 wires the
   `Answer_Composer` to a real provider; tasks 4.3 and 4.5 must be green before task 7.8 runs.
 
-  - [ ] 7.1 Implement the Computation_Layer
+  - [x] 7.1 Implement the Computation_Layer
     - Create `app/schemas/computation.py` (`ComputationRecord`, `BreakdownColumn` per design §4.3) and `app/services/pipeline/computation.py`: `Decimal` throughout with no `float` on any monetary path, one computation record per released figure with its unrounded value, rounding only at formatting and only half away from zero, the single total ordering used by preview, retained snapshot and export, preview truncation with aggregates computed from the complete result set, withheld ratios and percentage changes with operands released, the both-zero percentage-change rule, NULL-row exclusion with excluded and aggregated counts, the zero-row outcome distinct from a computed zero, and per-currency records when an aggregation spans currencies
     - Implement `template_answer()` — the deterministic sentence generator Requirement 17.4 falls back to, and the reason a grounded answer still exists with no provider configured
     - _Requirements: 15.1, 15.2, 15.3, 15.4, 15.5, 15.6, 15.7, 15.8, 15.9, 15.10, 15.11, 15.12, 17.4_
 
-  - [ ] 7.2 Property-test the computation layer
+  - [x] 7.2 Property-test the computation layer
     - Create `tests/properties/test_computation.py` with `decimal_rows()` and `aggregation_spec()`: every released aggregate, ratio, difference and percentage change equals an independent reference implementation over the same rows with NULL rows excluded and counted (P4); breakdown rows sum to the reported total at the recorded precision with no binary float in the path (P18)
     - _Requirements: 15.1, 15.2, 15.4, 15.5, 15.6, 15.7, 15.10_
     - _Properties: P4, P18_
@@ -238,12 +238,12 @@ composer, groundedness checker, export, anomaly and insights surfaces all read.
     - _Requirements: 21.2, 21.3, 21.4, 21.5, 21.6, 21.7, 21.9, 21.10, 21.11, 21.12, 21.13, 22.1, 32.10_
     - _Properties: P6, P19, P36_
 
-  - [ ] 7.5 Build draft_mutations() and implement the Groundedness_Checker
+  - [x] 7.5 Build draft_mutations() and implement the Groundedness_Checker
     - Create `tests/properties/generators/answers.py` with `draft_mutations()`: from a draft built only from sourced values, apply exactly one mutation — alter a digit, shift a decimal point, attach or change a scale word (thousand/lakh/crore/million/billion), re-express a figure in words, insert an unrelated numeral, round to a different place value, rename an entity, change a date
     - Create `app/services/pipeline/groundedness.py` following the design's `verify()` pseudocode: numeral, currency, percentage, date and words-with-scale extraction; matching at the place value of the least significant written digit within the configured tolerance against result-set values, computation-record values and unrounded values, row counts, group counts, enumerated counts and ordinals, and resolved-date-range bounds and covered calendar periods; entity-name matching after trimming, whitespace collapsing and case folding; rejection with a named unmatched value or unconvertible span and one regeneration request; the computation-records-first match order with the match source recorded, and the `groundedness_require_computation_record` tightening flag
     - _Requirements: 17.1, 17.2, 17.3, 17.5, 17.6, 17.7, 17.8, 17.9, 17.10, 17.11_
 
-  - [ ] 7.6 Gate: get Properties 3 and 34 green
+  - [x] 7.6 Gate: get Properties 3 and 34 green
     - Create `tests/properties/test_groundedness.py` using `result_set()`, `computation_records()` and `draft_mutations()`: every mutation except lossless re-expression must flip the verdict to reject — this is where a wrong crore multiplier, a 100× error in a finance answer, gets caught
     - Assert Property 34 as a payload constraint: the composition prompt contains only computation-record values, the configured sample rows, the resolved filters and the resolved date range, never the complete result set
     - **This gate must be green before task 7.7 wires the composer to a provider.** The reorder puts a real
@@ -270,7 +270,7 @@ composer, groundedness checker, export, anomaly and insights surfaces all read.
     - _Requirements: 14.1, 14.2, 14.3, 14.4, 14.5, 14.6, 14.7, 14.8, 14.9, 14.10, 14.11, 14.12, 14.13, 14.14, 14.16_
     - _Properties: P29_
 
-  - [ ] 7.10 Implement the Confidence_Scorer
+  - [x] 7.10 Implement the Confidence_Scorer
     - Create `app/services/pipeline/confidence.py` following the design's `score()` pseudocode: the documented eight-signal set each normalised to 0–1, configured weights rescaled over the applicable signals to sum to 1, reviewer-verdict and groundedness always applicable on an answered Turn, band mapping from the configured boundaries, the `Metric_Layer` first-attempt-approve floor at the `high` boundary, the caution naming the lowest weighted contribution with the configured tie order, the acceptance threshold as the release gate, and the full per-signal breakdown in the turn response
     - `confidence_scoring` is the penultimate stage of the demo trace, which is why the scorer is built here rather than with the refusal machinery in task 9; its property test (P14) stays with that suite in 9.4
     - _Requirements: 19.1, 19.2, 19.3, 19.4, 19.5, 19.6, 19.8, 19.10, 19.11, 19.12_
@@ -336,7 +336,7 @@ composer, groundedness checker, export, anomaly and insights surfaces all read.
     - Add `POST /api/admin/evaluation/runs` and `GET /api/admin/evaluation/runs/{id}` plus `--compare` report generation
     - _Requirements: 26.3, 26.4, 26.5, 26.6, 26.9, 26.10, 26.11, 26.12, 26.13, 26.14, 26.15, 14.17, 18.14, 18.15, 19.7, 19.13, 4.7, 4.11_
 
-  - [ ] 11.3 Property-test the comparator
+  - [x] 11.3 Property-test the comparator
     - Create `tests/properties/test_comparator.py`: reflexive on itself, insensitive to row order unless declared significant, tolerant at exactly 0.01 and intolerant above it, NULL matched only by NULL, and restricted to the declared expected columns — a bug here would silently invalidate every number in the deck
     - _Requirements: 26.3_
 
