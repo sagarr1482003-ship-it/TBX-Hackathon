@@ -72,10 +72,18 @@ export class ApiError extends Error {
 
 export async function createSession(surface: 'finance' | 'insights' = 'finance'): Promise<SessionCreated> {
   if (USE_MOCK) return mock.createSession(surface)
-  return apiFetch<SessionCreated>('/api/sessions', {
+  // Real backend: POST /api/chat/session returns { session_id }. Shape it into SessionCreated
+  // so the rest of the FE (which expects the richer contract) keeps working.
+  const created = await apiFetch<{ session_id: string }>('/api/chat/session', {
     method: 'POST',
     body: JSON.stringify({ surface }),
   })
+  return {
+    session_id: created.session_id,
+    surface,
+    starter_questions: [],
+    dataset_version: 1,
+  } as SessionCreated
 }
 
 export async function listSessions(cursor?: string, pageSize = 20): Promise<Page<SessionSummary>> {
@@ -120,6 +128,7 @@ export function submitTurnStreaming(
   onStage: (evt: AgentStreamEvent) => void,
   onComplete: (completion: AgentCompletion, events: AgentStreamEvent[]) => void,
   onError?: (err: unknown) => void,
+  sessionId?: string,
 ): () => void {
   const events: AgentStreamEvent[] = []
 
@@ -140,6 +149,7 @@ export function submitTurnStreaming(
       onError,
     },
     AUTH_TOKEN ? { 'X-Internal-Token': AUTH_TOKEN } : undefined,
+    sessionId,
   )
 }
 

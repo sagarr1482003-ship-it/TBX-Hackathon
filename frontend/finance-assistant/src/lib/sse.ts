@@ -54,6 +54,7 @@ export function streamChat(
   question: string,
   handlers: StreamHandlers,
   headers?: Record<string, string>,
+  sessionId?: string,
 ): () => void {
   const controller = new AbortController()
 
@@ -66,7 +67,7 @@ export function streamChat(
           Accept: 'text/event-stream',
           ...headers,
         },
-        body: JSON.stringify({ q: question }),
+        body: JSON.stringify(sessionId ? { q: question, session_id: sessionId } : { q: question }),
         signal: controller.signal,
       })
 

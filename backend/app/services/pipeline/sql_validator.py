@@ -191,9 +191,13 @@ def _declared_limit(root: exp.Expression) -> int | None:
 def _is_row_listing(root: exp.Expression) -> bool:
     """True when the query returns raw rows that should be capped by a default LIMIT.
 
-    A query is NOT a row listing (so gets no injected LIMIT) when it is an aggregate/grouped
-    query — it has a GROUP BY, or every projection is an aggregate (a scalar aggregate like
-    COUNT(*)/SUM(...)). Those return a bounded number of rows and a LIMIT would be misleading.
+    A query is NOT a row listing (so gets no injected LIMIT) when:
+      * it is grouped (GROUP BY) or a scalar aggregate (every projection is an aggregate) — those
+        return a bounded number of rows; or
+      * it narrows to a specific entity via an equality filter on an id/key column
+        (account_id, transaction_id, bank_code, transaction_reference_id) — e.g. a balance lookup
+        or one account's rows — where a blanket LIMIT is misleading noise.
+    A genuinely broad scan with none of the above keeps the default LIMIT as a real guardrail.
     """
     select = root if isinstance(root, exp.Select) else root.find(exp.Select)
     if select is None:
@@ -203,6 +207,15 @@ def _is_row_listing(root: exp.Expression) -> bool:
     projections = select.expressions or []
     if projections and all(p.find(exp.AggFunc) is not None for p in projections):
         return False  # scalar aggregate (e.g. SELECT COUNT(*), SUM(x)) -> single row
+    # Equality filter on an identifier column -> single-entity lookup, no blanket LIMIT.
+    _ID_COLS = {"account_id", "transaction_id", "bank_code", "transaction_reference_id",
+                "entity_id"}
+    where = select.args.get("where")
+    if where is not None:
+        for eq in where.find_all(exp.EQ):
+            col = eq.find(exp.Column)
+            if col is not None and col.name.lower() in _ID_COLS:
+                return False
     return True
 
 

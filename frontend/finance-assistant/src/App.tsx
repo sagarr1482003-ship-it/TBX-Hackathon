@@ -8,7 +8,7 @@ import { EvidencePanel } from './components/EvidencePanel'
 import { Sidebar } from './components/Sidebar'
 import { Buddy } from './components/Buddy'
 import { VoiceAgent } from './components/VoiceAgent'
-import { submitTurnStreaming } from './lib/api'
+import { submitTurnStreaming, createSession } from './lib/api'
 import { agentCompletionToQueryResult } from './lib/adapter'
 import type { ChatSession, QueryResult, Turn } from './lib/types'
 import { deriveTitle } from './lib/sessionGroups'
@@ -147,20 +147,23 @@ export default function App() {
       )
     }
 
-    // Stream the real pipeline: each SSE stage updates the thinking indicator,
-    // the terminal `completion` frame carries the answer.
-    submitTurnStreaming(
-      text,
-      (evt) => {
-        if (evt.event in STAGE_LABELS) setStageLabel(STAGE_LABELS[evt.event])
-      },
-      (completion, events) => {
-        appendResult(agentCompletionToQueryResult(completion, events))
-        setIsThinking(false)
-        setStageLabel(null)
-        setMobileView('evidence')
-      },
-      (err) => {
+    // Ensure a backend conversation exists for this UI session, then stream. The backend
+    // session_id is what carries follow-up memory across turns (POST /api/chat/session).
+    const runWithSession = (backendId: string | undefined) => {
+      // Stream the real pipeline: each SSE stage updates the thinking indicator,
+      // the terminal `completion` frame carries the answer.
+      submitTurnStreaming(
+        text,
+        (evt) => {
+          if (evt.event in STAGE_LABELS) setStageLabel(STAGE_LABELS[evt.event])
+        },
+        (completion, events) => {
+          appendResult(agentCompletionToQueryResult(completion, events))
+          setIsThinking(false)
+          setStageLabel(null)
+          setMobileView('evidence')
+        },
+        (err) => {
         console.error('Turn submission failed:', err)
         appendResult(
           agentCompletionToQueryResult({
@@ -181,7 +184,24 @@ export default function App() {
         setIsThinking(false)
         setStageLabel(null)
       },
-    )
+        backendId,
+      )
+    }
+
+    // Reuse this UI session's backend id, or create one on first turn, then stream.
+    const current = sessions.find((s) => s.id === sessionId)
+    if (current?.backendSessionId) {
+      runWithSession(current.backendSessionId)
+    } else {
+      createSession('finance')
+        .then((created) => {
+          setSessions((prev) =>
+            prev.map((s) => (s.id === sessionId ? { ...s, backendSessionId: created.session_id } : s)),
+          )
+          runWithSession(created.session_id)
+        })
+        .catch(() => runWithSession(undefined)) // fall back to a stateless turn
+    }
   }
 
   function handleSubmit(text: string) {

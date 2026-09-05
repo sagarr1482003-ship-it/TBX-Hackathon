@@ -102,6 +102,8 @@ export interface ChatSession {
   turns: Turn[]
   context: QueryContext
   activeResultId?: string
+  /** Backend conversation id (POST /api/chat/session) for follow-up memory. */
+  backendSessionId?: string
 }
 
 // =============================================================================
