@@ -49,6 +49,7 @@ class PipelineResult:
     answer: str | None = None
     answer_source: str | None = None  # "llm" | "template" | "template_fallback"
     chart: dict | None = None  # ChartSpec.to_dict() when the result is chartable
+    computed_metrics: dict = field(default_factory=dict)  # GST/cashflow/anomaly tool outputs
     clarification: str | None = None  # follow-up question when the turn needs more info
     total_ms: int = 0
     stage_ms: dict[str, int] = field(default_factory=dict)
@@ -367,6 +368,19 @@ class SimplePipeline:
                 "masked_columns": sorted(self._sensitive),
             }, exec_ms)
 
+            # Deterministic calculator tools (GST / cash-flow / anomaly) — run in Python over the
+            # full result rows, ALWAYS (independent of the LLM), so the figures are grounded and
+            # present even if the composer call fails. The LLM only phrases them afterwards.
+            from app.services.model.answer_composer import AnswerComposer
+
+            t = time.monotonic()
+            result.computed_metrics = AnswerComposer._run_calculators(question, columns, masked)
+            if result.computed_metrics:
+                yield ev("computation", "ok", "deterministic_guardrail",
+                         {"tools": list(result.computed_metrics.keys()),
+                          "computed_metrics": result.computed_metrics},
+                         int((time.monotonic() - t) * 1000))
+
             # Answer_Composer — LLM tool call, grounded by the checker.
             yield ev("answer_composition", "start", "llm_tool_call",
                      {"role": "composer", "model": self._model_id("composer")})
@@ -388,7 +402,7 @@ class SimplePipeline:
                 if (self._answer_composer and result.answer_source == "llm") else {}
             yield ev("answer_composition", "ok", "llm_tool_call",
                      {"answer": result.answer, "answer_source": result.answer_source,
-                      "usage": comp_usage}, comp_ms)
+                      "usage": comp_usage, "computed_metrics": result.computed_metrics}, comp_ms)
 
         result.total_ms = _elapsed()
         yield {"event": "completion", "data": _stream_payload(question, result, tokens)}
@@ -418,6 +432,7 @@ def _stream_payload(question: str, r: "PipelineResult", tokens: dict | None = No
         "answer_text": r.answer,
         "answer_source": r.answer_source,
         "chart": r.chart,
+        "computed_metrics": r.computed_metrics,
         "token_usage": tokens or {
             "input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "llm_calls": 0
         },

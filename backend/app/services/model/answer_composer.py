@@ -37,11 +37,41 @@ class AnswerComposer:
     def __init__(self, agent_factory, *, sample_rows: int = 10) -> None:
         self._agent_factory = agent_factory
         self.last_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+        self.last_computed: dict = {}
         self._sample_rows = sample_rows
 
     @property
     def system_prompt(self) -> str:
         return _SYSTEM
+
+    @staticmethod
+    def _run_calculators(question: str, columns: list[str], rows: list[dict]) -> dict:
+        """Run the relevant deterministic calculator tools over the executed rows.
+
+        Keyword-routed so we only compute what the question asks for. All math is Decimal in the
+        calculators; the LLM only states the returned figures. Returns {tool: result}.
+        """
+        import re
+
+        from app.services.pipeline.calculators import (
+            anomaly_calculator,
+            cashflow_calculator,
+            gst_calculator,
+        )
+
+        q = question.lower()
+        out: dict = {}
+        if "gst" in q or "tax" in q:
+            # Extract an explicit rate like "18%" / "18 percent"; else default 18%.
+            m = re.search(r"(\d+(?:\.\d+)?)\s*(?:%|percent)", q)
+            rate = (float(m.group(1)) / 100.0) if m else 0.18
+            out["gst"] = gst_calculator(rows, columns, rate=rate)
+        if any(k in q for k in ("cash flow", "cashflow", "net flow", "inflow", "outflow", "net")):
+            out["cashflow"] = cashflow_calculator(rows, columns)
+        if any(k in q for k in ("anomaly", "anomalies", "outlier", "unusual", "spike", "fraud")):
+            out["anomaly"] = anomaly_calculator(rows, columns)
+        # Keep only applicable results to avoid confusing the LLM with N/A tools.
+        return {k: v for k, v in out.items() if v.get("applicable")}
 
     def compose(
         self, question: str, columns: list[str], rows: list[dict], total_rows: int | None = None
@@ -52,17 +82,29 @@ class AnswerComposer:
         # and grounding tight regardless of whether the query returned 1 row or 1000.
         sample = rows[: self._sample_rows]
         total = total_rows if total_rows is not None else len(rows)
+        # Run the deterministic calculator TOOLS over ALL rows (not the sample). The LLM does not
+        # do the math — it picks which pre-computed figures are relevant to the question and
+        # states them. Rates/assumptions are echoed so the answer stays honest.
+        computed = self._run_calculators(question, columns, rows)
+        self.last_computed = computed
         payload = {
             "columns": columns,
             "sample_rows": sample,
             "total_rows": total,
+            "computed_metrics": computed,
             "note": (
                 "sample_rows is ONLY a preview of total_rows results. Answer with the "
                 "total_rows count and, if present, the date range. Do NOT state or characterise "
                 "any amount, value, or that rows share a value — the preview is not "
-                "representative of all rows."
+                "representative of all rows. If computed_metrics has a value relevant to the "
+                "question (GST, cash flow, anomalies), state it verbatim and mention any stated "
+                "assumption (e.g. the GST rate)."
                 if total > len(sample)
-                else "sample_rows is the complete result."
+                else (
+                    "sample_rows is the complete result. If computed_metrics is relevant to the "
+                    "question (GST, cash flow, anomalies), state those figures verbatim including "
+                    "any stated assumption (e.g. the GST rate)."
+                )
             ),
         }
         prompt = (

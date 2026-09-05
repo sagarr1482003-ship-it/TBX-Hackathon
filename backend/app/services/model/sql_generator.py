@@ -38,6 +38,9 @@ do NOT guess. Instead output exactly one line:
 CLARIFY: <one short follow-up question>
 Aggregate questions over all data (e.g. "total credit amount", "transactions per bank",
 "how many debits") ARE answerable — write SQL for those, do not clarify.
+For GST/tax, cash-flow, or anomaly questions: return only the RAW aggregate the tool needs
+(e.g. SUM(transaction_amount), or transaction_type + SUM(transaction_amount) GROUP BY
+transaction_type). Do NOT compute GST, net flow, or z-scores in SQL — a downstream tool does that.
 
 Examples (question -> SQL):
 Q: How many debit transactions are there?

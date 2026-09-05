@@ -28,6 +28,11 @@ Schema:
   transaction(transaction_id, account_id, transaction_date, transaction_type['credit'|'debit'],
               description, transaction_amount, transaction_reference_id, utr_number[SENSITIVE])
 
+For GST/tax, cash-flow, or anomaly questions, the correct query returns the RAW aggregate
+(e.g. SUM(transaction_amount)) — a downstream deterministic tool computes GST / net flow /
+z-scores from it. Do NOT require the SQL to multiply by a tax rate or compute those itself;
+approve a correct raw aggregate for such questions.
+
 Return your answer as exactly two lines:
 VERDICT: approve | repair | reject
 REASON: <short justification, one line>
