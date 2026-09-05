@@ -7,16 +7,16 @@ const LANGUAGES = ['English', 'Hindi', 'Tamil', 'Telugu', 'Bengali', 'Marathi', 
 
 const SCENARIOS = [
   {
-    raw: "umm like, how much did we... pay that logistics company, last month or something?",
-    framed: 'How much did we spend on Meridian Logistics last month?',
+    raw: "umm like, how much did we... receive in credits, last month or something?",
+    framed: 'What was the total volume of credit transactions last month?',
   },
   {
-    raw: "is there stuff that hasn't been like, closed out yet, in the books?",
-    framed: 'Which transactions are still unreconciled?',
+    raw: "is there an account with like, a really huge balance?",
+    framed: 'Which account has the highest available balance?',
   },
   {
-    raw: 'did anyone get paid a weirdly large amount recently? like more than usual',
-    framed: 'Any unusual vendor payments recently?',
+    raw: 'did anyone withdraw a weirdly large amount recently? like more than usual',
+    framed: 'Any unusual debit transactions recently?',
   },
 ]
 

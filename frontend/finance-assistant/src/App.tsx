@@ -8,30 +8,31 @@ import { EvidencePanel } from './components/EvidencePanel'
 import { Sidebar } from './components/Sidebar'
 import { Buddy } from './components/Buddy'
 import { VoiceAgent } from './components/VoiceAgent'
-import { runQuery } from './lib/queryEngine'
-import type { ChatSession, QueryContext, Turn } from './lib/types'
+import { submitTurnStreaming } from './lib/api'
+import { agentCompletionToQueryResult } from './lib/adapter'
+import type { ChatSession, QueryResult, Turn } from './lib/types'
 import { deriveTitle } from './lib/sessionGroups'
 import { loadSessions, saveSessions } from './lib/storage'
 
+/** Short, human-readable label per pipeline stage, shown while the turn streams. */
+const STAGE_LABELS: Record<string, string> = {
+  intake: 'Reading the question',
+  sql_generation: 'Writing SQL',
+  static_validation: 'Checking the SQL is safe',
+  reviewer_verdict: 'Reviewing the query',
+  execution: 'Running the query',
+  answer_composition: 'Writing the answer',
+  clarification: 'Asking a follow-up',
+}
+
 function makeSeededSession(): ChatSession {
-  const turns: Turn[] = []
-  const q1 = 'What did we spend on vendor payouts last month?'
-  const { result: r1, context: c1 } = runQuery(q1)
-  turns.push({ id: 'seed-u1', role: 'user', text: q1 })
-  turns.push({ id: 'seed-a1', role: 'assistant', result: r1 })
-
-  const q2 = 'How does that compare to the month before?'
-  const { result: r2, context: c2 } = runQuery(q2, c1)
-  turns.push({ id: 'seed-u2', role: 'user', text: q2 })
-  turns.push({ id: 'seed-a2', role: 'assistant', result: r2 })
-
   return {
     id: `s-seed-${Date.now()}`,
-    title: deriveTitle(q1),
+    title: 'New chat',
     createdAt: Date.now(),
-    turns,
-    context: c2,
-    activeResultId: r2.id,
+    turns: [],
+    context: {},
+    activeResultId: undefined,
   }
 }
 
@@ -57,6 +58,7 @@ export default function App() {
   const [sessions, setSessions] = useState<ChatSession[]>(initial.sessions)
   const [activeSessionId, setActiveSessionId] = useState<string>(initial.activeId)
   const [isThinking, setIsThinking] = useState(false)
+  const [stageLabel, setStageLabel] = useState<string | null>(null)
   const [mobileView, setMobileView] = useState<'chat' | 'evidence'>('chat')
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [voiceAgentOpen, setVoiceAgentOpen] = useState(false)
@@ -129,22 +131,57 @@ export default function App() {
       ),
     )
     setIsThinking(true)
-    window.setTimeout(() => {
+    setStageLabel(STAGE_LABELS.intake)
+
+    const appendResult = (result: QueryResult) => {
       setSessions((prev) =>
         prev.map((s) => {
           if (s.id !== sessionId) return s
-          const { result, context: nextContext } = runQuery(text, s.context as QueryContext)
           return {
             ...s,
             turns: [...s.turns, { id: `a-${Date.now()}`, role: 'assistant', result }],
-            context: nextContext,
+            context: {},
             activeResultId: result.id,
           }
         }),
       )
-      setIsThinking(false)
-      setMobileView('evidence')
-    }, 450)
+    }
+
+    // Stream the real pipeline: each SSE stage updates the thinking indicator,
+    // the terminal `completion` frame carries the answer.
+    submitTurnStreaming(
+      text,
+      (evt) => {
+        if (evt.event in STAGE_LABELS) setStageLabel(STAGE_LABELS[evt.event])
+      },
+      (completion, events) => {
+        appendResult(agentCompletionToQueryResult(completion, events))
+        setIsThinking(false)
+        setStageLabel(null)
+        setMobileView('evidence')
+      },
+      (err) => {
+        console.error('Turn submission failed:', err)
+        appendResult(
+          agentCompletionToQueryResult({
+            question: text,
+            outcome: 'review_failed',
+            clarification: null,
+            resolved_sql: null,
+            answer_text: null,
+            answer_source: null,
+            chart: null,
+            verdict: null,
+            breakdown: null,
+            validation_ok: false,
+            validation_reason: 'The request to the assistant failed. Please try again.',
+            total_ms: 0,
+          }),
+        )
+        setIsThinking(false)
+        setStageLabel(null)
+      },
+    )
   }
 
   function handleSubmit(text: string) {
@@ -274,7 +311,7 @@ export default function App() {
                   />
                 ),
               )}
-              {isThinking && <ThinkingBubble />}
+              {isThinking && <ThinkingBubble label={stageLabel ?? undefined} />}
             </div>
             <Composer onSubmit={handleSubmit} disabled={isThinking} />
           </section>
