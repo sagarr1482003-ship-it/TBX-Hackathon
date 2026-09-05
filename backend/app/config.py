@@ -432,17 +432,20 @@ class Settings(BaseSettings):
     groq_base_url: str = Field(default="https://api.groq.com/openai/v1")
     sql_generator_model: str = Field(default="qwen/qwen3.8-27b")
     reviewer_model: str = Field(default="qwen/qwen3.8-27b")
+    composer_model: str = Field(default="qwen/qwen3.8-27b")
     model_request_timeout: int = Field(default=30)
     # Qwen 3.x reasoning_effort (low | medium | xhigh). For a single-line SELECT there is
     # nothing to deliberate: 'medium'/'xhigh' burn the whole token budget on chain-of-thought
     # and never emit the JSON. 'low' is fast and reliable for structured text-to-SQL.
     sql_generator_reasoning_effort: str | None = Field(default="low")
     reviewer_reasoning_effort: str | None = Field(default="low")
+    composer_reasoning_effort: str | None = Field(default="low")
     # Max output tokens per role. None = do not send a limit (uncapped). The real latency
     # control is reasoning_effort=low above; leaving this unset removes the ceiling that was
     # truncating the JSON.
     sql_generator_max_tokens: int | None = Field(default=None)
     reviewer_max_tokens: int | None = Field(default=None)
+    composer_max_tokens: int | None = Field(default=None)
 
     # ----------------------------------------------------------------------------------
     # Blank-environment-variable coercion: a set-but-empty variable falls back to the

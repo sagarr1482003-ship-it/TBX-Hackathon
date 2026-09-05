@@ -13,9 +13,12 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 
+from app.services.ingestion.contract import SEED_CONTRACTS
 from app.services.knowledge.schema_lookup import InMemorySchemaKB
 from app.services.model.reviewer import ReviewerAgent, ReviewVerdict
 from app.services.model.sql_generator import SqlCandidate, SqlGenerator
+from app.services.pipeline.chart_spec import build_chart_spec
+from app.services.pipeline.masking import mask_rows, sensitive_columns
 from app.services.pipeline.sql_validator import SqlValidator
 
 # The 3-table bank/account/transaction schema, for validator conformance checks (no DB needed).
@@ -40,6 +43,11 @@ class PipelineResult:
     validation_reason: str | None = None
     canonical_sql: str | None = None
     verdict: ReviewVerdict | None = None
+    rows: list[dict] | None = None
+    columns: list[str] | None = None
+    answer: str | None = None
+    answer_source: str | None = None  # "llm" | "template" | "template_fallback"
+    chart: dict | None = None  # ChartSpec.to_dict() when the result is chartable
     total_ms: int = 0
     stage_ms: dict[str, int] = field(default_factory=dict)
 
@@ -51,7 +59,11 @@ class PipelineResult:
             return "validation_rejected"
         if self.verdict is None:
             return "review_failed"
-        return self.verdict.verdict
+        if self.verdict.verdict != "approve":
+            return self.verdict.verdict
+        if self.answer is not None:
+            return "answered"
+        return "approve"
 
 
 class SimplePipeline:
@@ -61,12 +73,21 @@ class SimplePipeline:
         reviewer: ReviewerAgent,
         *,
         intent_family: str = "transaction_lookup",
+        executor=None,
+        answer_composer=None,
     ) -> None:
+        # executor(sql) -> (columns, rows) runs the approved SQL read-only. Optional so the
+        # no-DB unit tests still exercise generate/validate/review without a database.
+        # answer_composer.compose(question, columns, rows) -> str writes NL prose; when absent,
+        # a deterministic template sentence is used (grounded by construction).
         self._generator = generator
         self._reviewer = reviewer
         self._validator = SqlValidator()
         self._schema = InMemorySchemaKB(SEED_SCHEMA)
         self._intent = intent_family
+        self._executor = executor
+        self._answer_composer = answer_composer
+        self._sensitive = sensitive_columns(SEED_CONTRACTS)
 
     def run(self, question: str) -> PipelineResult:
         result = PipelineResult(question=question)
@@ -107,5 +128,54 @@ class SimplePipeline:
         result.verdict = review
         result.stage_ms["reviewer_verdict"] = int((time.monotonic() - t0) * 1000)
 
+        # 4) execute (read-only) + compose a simple grounded, masked answer
+        if self._executor is not None and review.verdict == "approve":
+            t0 = time.monotonic()
+            try:
+                columns, rows = self._executor(canonical)
+            except Exception as exc:
+                result.validation_reason = f"execution error: {exc}"
+                result.total_ms = int((time.monotonic() - t_start) * 1000)
+                return result
+            masked = mask_rows(rows, self._sensitive)
+            result.columns = columns
+            result.rows = masked
+            # Chart spec from the raw executed rows (numeric values; labels are non-sensitive).
+            spec = build_chart_spec(columns, rows)
+            result.chart = spec.to_dict() if spec else None
+            # LLM answer composer (Option A) with the deterministic template as grounded fallback.
+            if self._answer_composer is not None:
+                t1 = time.monotonic()
+                try:
+                    result.answer = self._answer_composer.compose(question, columns, masked)
+                    result.answer_source = "llm"
+                except Exception:
+                    result.answer = _compose_answer(question, columns, masked)
+                    result.answer_source = "template_fallback"
+                result.stage_ms["answer_composition"] = int((time.monotonic() - t1) * 1000)
+            else:
+                result.answer = _compose_answer(question, columns, masked)
+                result.answer_source = "template"
+            result.stage_ms["execution"] = int((time.monotonic() - t0) * 1000)
+
         result.total_ms = int((time.monotonic() - t_start) * 1000)
         return result
+
+
+def _compose_answer(question: str, columns: list[str], rows: list[dict]) -> str:
+    """A minimal deterministic answer from executed rows (LLM does not touch numbers).
+
+    Single scalar -> state it directly; otherwise summarise the row count and show the top rows.
+    """
+    if not rows:
+        return "No records match your question."
+    if len(rows) == 1 and len(columns) == 1:
+        col = columns[0]
+        return f"{rows[0][col]}"
+    if len(rows) == 1:
+        pairs = ", ".join(f"{c} = {rows[0][c]}" for c in columns)
+        return pairs
+    head = rows[:5]
+    lines = [", ".join(f"{c}={r[c]}" for c in columns) for r in head]
+    more = f" (showing 5 of {len(rows)})" if len(rows) > 5 else ""
+    return f"{len(rows)} rows{more}:\n" + "\n".join(lines)

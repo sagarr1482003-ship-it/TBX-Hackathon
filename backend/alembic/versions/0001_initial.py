@@ -26,7 +26,19 @@ depends_on = None
 
 def upgrade() -> None:
     # --- extensions ---------------------------------------------------------------------
-    op.execute("CREATE EXTENSION IF NOT EXISTS vector")
+    # pgvector powers the Schema_KB embeddings. It is OPTIONAL for the core question->answer
+    # pipeline (the SQL_Validator only needs table/column existence), so skip gracefully when
+    # the extension is not installed on the server rather than failing the whole migration.
+    op.execute(
+        """
+        DO $$
+        BEGIN
+            CREATE EXTENSION IF NOT EXISTS vector;
+        EXCEPTION WHEN OTHERS THEN
+            RAISE NOTICE 'pgvector not available; Schema_KB vector features disabled';
+        END $$;
+        """
+    )
     op.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
 
     # --- roles (R13.1, R13.2, R13.6) ----------------------------------------------------
