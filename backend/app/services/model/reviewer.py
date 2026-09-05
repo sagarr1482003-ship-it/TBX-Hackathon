@@ -12,9 +12,8 @@ import re
 from typing import Literal
 
 from pydantic import BaseModel, Field
-from strands import Agent
 
-from app.services.model.groq_client import agent_text_with_usage
+from app.services.model.groq_client import call_with_fallback
 
 _SYSTEM = """You are a meticulous reviewer of PostgreSQL queries for a bank finance assistant.
 Given a question and a candidate SELECT, decide whether it correctly and safely answers the
@@ -65,8 +64,9 @@ def parse_verdict(text: str) -> ReviewVerdict:
 
 
 class ReviewerAgent:
-    def __init__(self, agent_factory) -> None:
+    def __init__(self, agent_factory, fallback_factory=None) -> None:
         self._agent_factory = agent_factory
+        self._fallback_factory = fallback_factory
         self.last_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
 
     @property
@@ -74,10 +74,11 @@ class ReviewerAgent:
         return _SYSTEM
 
     def review(self, resolved_question: str, candidate_sql: str) -> ReviewVerdict:
-        agent: Agent = self._agent_factory()
         prompt = (
             f"Question: {resolved_question}\nCandidate SQL:\n{candidate_sql}\n"
             "Give your VERDICT and REASON."
         )
-        text, self.last_usage = agent_text_with_usage(agent, prompt)
+        text, self.last_usage = call_with_fallback(
+            self._agent_factory, self._fallback_factory, prompt
+        )
         return parse_verdict(text)

@@ -100,6 +100,21 @@ def agent_text_with_usage(agent: Agent, prompt: str) -> tuple[str, dict]:
     return str(result).strip(), _extract_usage(result)
 
 
+def call_with_fallback(primary_factory, fallback_factory, prompt: str) -> tuple[str, dict]:
+    """Call the primary agent; on ANY failure, retry once with the fallback agent.
+
+    Both factories are zero-arg callables returning a fresh Strands Agent. ``fallback_factory``
+    may be None (no fallback configured) — then the primary error propagates. Used so a Groq
+    outage/rate-limit transparently fails over to OpenRouter.
+    """
+    try:
+        return agent_text_with_usage(primary_factory(), prompt)
+    except Exception:
+        if fallback_factory is None:
+            raise
+        return agent_text_with_usage(fallback_factory(), prompt)
+
+
 def agent_text(agent: Agent, prompt: str) -> str:
     """Invoke a Strands agent and return its final text response (token usage discarded).
 

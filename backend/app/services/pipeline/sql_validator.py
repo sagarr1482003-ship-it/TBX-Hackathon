@@ -122,6 +122,7 @@ _ACCEPTED_NODE_TYPES: frozenset[type[exp.Expression]] = frozenset(
         exp.Bracket,
         exp.Window,
         exp.WindowSpec,
+        exp.Filter,  # aggregate FILTER (WHERE ...) — safe, read-only SQL-standard clause
         exp.Anonymous,  # present in the walk but rejected explicitly below
     }
 )

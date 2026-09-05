@@ -436,6 +436,12 @@ class Settings(BaseSettings):
     sql_generator_model: str = Field(default="qwen/qwen3.8-27b")
     reviewer_model: str = Field(default="qwen/qwen3.8-27b")
     composer_model: str = Field(default="qwen/qwen3.8-27b")
+    # --- OpenRouter fallback (OpenAI-compatible) ---
+    # When a Groq call fails (rate limit / error / timeout) the agent retries once against
+    # OpenRouter using openrouter_model. Blank key disables the fallback.
+    openrouter_api_key: str | None = Field(default=None)
+    openrouter_base_url: str = Field(default="https://openrouter.ai/api/v1")
+    openrouter_model: str = Field(default="qwen/qwen3-30b-a3b")
     model_request_timeout: int = Field(default=30)
     # Qwen 3.x reasoning_effort (low | medium | xhigh). For a single-line SELECT there is
     # nothing to deliberate: 'medium'/'xhigh' burn the whole token budget on chain-of-thought

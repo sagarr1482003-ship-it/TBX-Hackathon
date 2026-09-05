@@ -117,6 +117,28 @@ def build_pipeline():
             reasoning_effort=s.composer_reasoning_effort, max_tokens=s.composer_max_tokens,
         )
 
+    # --- OpenRouter fallback factories (used only if a Groq call raises) ---
+    or_key = s.openrouter_api_key or ""
+
+    def _or_agent(system: str):
+        return agent_for(
+            or_key, s.openrouter_model, system, base_url=s.openrouter_base_url,
+            reasoning_effort="low", max_tokens=None,
+        )
+
+    if or_key:
+        def gen_fallback():
+            return _or_agent(GENERATOR_SYSTEM)
+
+        def rev_fallback():
+            return _or_agent(REVIEWER_SYSTEM)
+
+        def comp_fallback():
+            return _or_agent(COMPOSER_SYSTEM)
+    else:
+        gen_fallback = rev_fallback = comp_fallback = None
+        logger.info("OpenRouter fallback disabled (no OPENROUTER_API_KEY set).")
+
     cipher = None
     if s.pii_encryption_key:
         from app.services.pipeline.pii_crypto import PiiCipher
@@ -127,10 +149,10 @@ def build_pipeline():
         s.postgres_reader_dsn or s.postgres_dsn, cipher=cipher, sensitive=sensitive
     )
     pipeline = SimplePipeline(
-        SqlGenerator(gen_agent),
-        ReviewerAgent(rev_agent),
+        SqlGenerator(gen_agent, fallback_factory=gen_fallback),
+        ReviewerAgent(rev_agent, fallback_factory=rev_fallback),
         executor=executor,
-        answer_composer=AnswerComposer(comp_agent),
+        answer_composer=AnswerComposer(comp_agent, fallback_factory=comp_fallback),
         max_plan_cost=s.max_plan_cost,
     )
     return pipeline, pool

@@ -12,9 +12,7 @@ from __future__ import annotations
 
 import json
 
-from strands import Agent
-
-from app.services.model.groq_client import agent_text_with_usage
+from app.services.model.groq_client import call_with_fallback
 
 _SYSTEM = """You are a finance assistant. Write ONE clear, direct sentence (max 40 words) that
 DIRECTLY answers the user's question using the provided result.
@@ -43,8 +41,9 @@ Strict grounding rules:
 
 
 class AnswerComposer:
-    def __init__(self, agent_factory, *, sample_rows: int = 10) -> None:
+    def __init__(self, agent_factory, *, sample_rows: int = 10, fallback_factory=None) -> None:
         self._agent_factory = agent_factory
+        self._fallback_factory = fallback_factory
         self.last_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
         self.last_computed: dict = {}
         self._sample_rows = sample_rows
@@ -85,7 +84,6 @@ class AnswerComposer:
     def compose(
         self, question: str, columns: list[str], rows: list[dict], total_rows: int | None = None
     ) -> str:
-        agent: Agent = self._agent_factory()
         # The LLM NEVER receives a large result set: cap the sample hard. A big listing is
         # summarised by its total_rows count, not enumerated — this keeps tokens/latency bounded
         # and grounding tight regardless of whether the query returned 1 row or 1000.
@@ -121,5 +119,7 @@ class AnswerComposer:
             f"Result (JSON): {json.dumps(payload, default=str)}\n"
             "Write the one-sentence answer."
         )
-        text, self.last_usage = agent_text_with_usage(agent, prompt)
+        text, self.last_usage = call_with_fallback(
+            self._agent_factory, self._fallback_factory, prompt
+        )
         return text.strip()
