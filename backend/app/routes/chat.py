@@ -42,6 +42,9 @@ class ChatRequest(BaseModel):
 async def chat_stream(body: ChatRequest):
     """Stream the pipeline's trace stages as SSE, with optional session follow-up context."""
     sessions = get_session_manager()
+    # Session is backend-generated: the FE calls POST /api/chat/session when a new chat window
+    # opens and sends that session_id with each question. An unknown/expired id yields no history
+    # (treated as a fresh conversation).
     history = sessions.history(body.session_id) if body.session_id else []
     pipeline, pool = build_pipeline()
 

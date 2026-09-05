@@ -78,13 +78,34 @@ def agent_for(
     return Agent(model=model, system_prompt=system_prompt, callback_handler=None)
 
 
+def _extract_usage(result) -> dict:
+    """Best-effort token usage from a Strands AgentResult (shape varies by version)."""
+    usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+    try:
+        summary = result.metrics.get_summary()
+        acc = summary.get("accumulated_usage", {}) if isinstance(summary, dict) else {}
+        usage["input_tokens"] = int(acc.get("inputTokens", 0) or 0)
+        usage["output_tokens"] = int(acc.get("outputTokens", 0) or 0)
+        usage["total_tokens"] = int(
+            acc.get("totalTokens", usage["input_tokens"] + usage["output_tokens"]) or 0
+        )
+    except Exception:
+        pass
+    return usage
+
+
+def agent_text_with_usage(agent: Agent, prompt: str) -> tuple[str, dict]:
+    """Invoke a Strands agent; return (final text, token-usage dict)."""
+    result = agent(prompt)
+    return str(result).strip(), _extract_usage(result)
+
+
 def agent_text(agent: Agent, prompt: str) -> str:
-    """Invoke a Strands agent and return its final text response.
+    """Invoke a Strands agent and return its final text response (token usage discarded).
 
     Plain-text invocation avoids the function-calling wrapping of ``structured_output``, which
     some reasoning models on OpenAI-compatible endpoints fail to complete. Callers parse the
     text themselves (e.g. extract one SELECT).
     """
-    result = agent(prompt)
-    # AgentResult stringifies to the final assistant text.
-    return str(result).strip()
+    text, _ = agent_text_with_usage(agent, prompt)
+    return text

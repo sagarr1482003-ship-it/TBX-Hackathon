@@ -13,7 +13,7 @@ import re
 from pydantic import BaseModel, Field
 from strands import Agent
 
-from app.services.model.groq_client import agent_text
+from app.services.model.groq_client import agent_text_with_usage
 
 _SYSTEM = """You are a careful PostgreSQL query writer for a bank finance assistant.
 Translate a plain-language question into ONE read-only SELECT statement.
@@ -93,6 +93,7 @@ class SqlGenerator:
     def __init__(self, agent_factory) -> None:
         # agent_factory() -> a fresh Strands Agent configured with the generator model + prompt.
         self._agent_factory = agent_factory
+        self.last_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
 
     @property
     def system_prompt(self) -> str:
@@ -101,7 +102,7 @@ class SqlGenerator:
     def generate(self, resolved_question: str, history: list | None = None) -> SqlCandidate:
         agent: Agent = self._agent_factory()
         prompt = self._with_history(resolved_question, history)
-        text = agent_text(agent, prompt)
+        text, self.last_usage = agent_text_with_usage(agent, prompt)
         # The generator may ask a follow-up instead of writing SQL (one call, no extra agent).
         m = re.search(r"CLARIFY:\s*(.+)", text, re.IGNORECASE | re.DOTALL)
         if m and "select" not in text.lower()[: m.start()]:

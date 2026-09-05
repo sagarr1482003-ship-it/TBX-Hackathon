@@ -212,6 +212,17 @@ class SimplePipeline:
                 },
             }
 
+        tokens = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "llm_calls": 0}
+
+        def add_usage(u: dict) -> dict:
+            """Accumulate an LLM call's usage into the running total; return the call's usage."""
+            u = u or {}
+            tokens["input_tokens"] += int(u.get("input_tokens", 0) or 0)
+            tokens["output_tokens"] += int(u.get("output_tokens", 0) or 0)
+            tokens["total_tokens"] += int(u.get("total_tokens", 0) or 0)
+            tokens["llm_calls"] += 1
+            return u
+
         yield ev("intake", "ok", "io", {"question": question, "chars": len(question)})
 
         # 1) generate (or clarify) — LLM tool call: SQL_Generator (Strands agent on Groq).
@@ -224,19 +235,22 @@ class SimplePipeline:
             result.validation_reason = f"generation error: {exc}"
             result.total_ms = _elapsed()
             yield ev("sql_generation", "error", "llm_tool_call", {"error": str(exc)[:200]})
-            yield {"event": "completion", "data": _stream_payload(question, result)}
+            yield {"event": "completion", "data": _stream_payload(question, result, tokens)}
             return
         gen_ms = int((time.monotonic() - t) * 1000)
         result.candidate = candidate
+        gen_usage = add_usage(getattr(self._generator, "last_usage", None))
 
         if candidate.clarification:
             result.clarification = candidate.clarification
             result.total_ms = _elapsed()
             yield ev("clarification", "ok", "deterministic_guardrail",
-                     {"guardrail": "ambiguity_check", "question": candidate.clarification}, gen_ms)
-            yield {"event": "completion", "data": _stream_payload(question, result)}
+                     {"guardrail": "ambiguity_check", "question": candidate.clarification,
+                      "usage": gen_usage}, gen_ms)
+            yield {"event": "completion", "data": _stream_payload(question, result, tokens)}
             return
-        yield ev("sql_generation", "ok", "llm_tool_call", {"sql": candidate.sql}, gen_ms)
+        yield ev("sql_generation", "ok", "llm_tool_call",
+                 {"sql": candidate.sql, "usage": gen_usage}, gen_ms)
 
         # 2) SQL_Validator — deterministic security guardrail (the boundary).
         yield ev("static_validation", "start", "deterministic_guardrail",
@@ -252,7 +266,7 @@ class SimplePipeline:
             yield ev("static_validation", "rejected", "deterministic_guardrail",
                      {"guardrail": "sql_ast_validator", "reason": result.validation_reason,
                       "category": getattr(verdict, "category", None)}, val_ms)
-            yield {"event": "completion", "data": _stream_payload(question, result)}
+            yield {"event": "completion", "data": _stream_payload(question, result, tokens)}
             return
         result.validation_ok = True
         result.canonical_sql = canonical
@@ -277,12 +291,13 @@ class SimplePipeline:
             result.validation_reason = f"reviewer error: {exc}"
             result.total_ms = _elapsed()
             yield ev("reviewer_verdict", "error", "llm_tool_call", {"error": str(exc)[:200]})
-            yield {"event": "completion", "data": _stream_payload(question, result)}
+            yield {"event": "completion", "data": _stream_payload(question, result, tokens)}
             return
         rev_ms = int((time.monotonic() - t) * 1000)
         result.verdict = review
+        rev_usage = add_usage(getattr(self._reviewer, "last_usage", None))
         yield ev("reviewer_verdict", "ok", "llm_tool_call",
-                 {"verdict": review.verdict, "reason": review.reason}, rev_ms)
+                 {"verdict": review.verdict, "reason": review.reason, "usage": rev_usage}, rev_ms)
 
         # 4) execute + compose
         if self._executor is not None and review.verdict == "approve":
@@ -310,7 +325,10 @@ class SimplePipeline:
                         yield ev("plan_inspection", "rejected", "deterministic_guardrail",
                                  {"guardrail": "explain_cost_gate", "cost": cost,
                                   "max_plan_cost": self._max_plan_cost}, plan_ms)
-                        yield {"event": "completion", "data": _stream_payload(question, result)}
+                        yield {
+                            "event": "completion",
+                            "data": _stream_payload(question, result, tokens),
+                        }
                         return
                     yield ev("plan_inspection", "ok", "deterministic_guardrail",
                              {"guardrail": "explain_cost_gate", "cost": cost,
@@ -326,7 +344,7 @@ class SimplePipeline:
                 result.validation_reason = f"execution error: {exc}"
                 result.total_ms = _elapsed()
                 yield ev("execution", "error", "db", {"error": str(exc)[:200]})
-                yield {"event": "completion", "data": _stream_payload(question, result)}
+                yield {"event": "completion", "data": _stream_payload(question, result, tokens)}
                 return
             exec_ms = int((time.monotonic() - t) * 1000)
             if len(result_tuple) == 3:
@@ -366,11 +384,14 @@ class SimplePipeline:
                 result.answer = _compose_answer(question, columns, masked, total_rows=total)
                 result.answer_source = "template"
             comp_ms = int((time.monotonic() - t) * 1000)
+            comp_usage = add_usage(getattr(self._answer_composer, "last_usage", None)) \
+                if (self._answer_composer and result.answer_source == "llm") else {}
             yield ev("answer_composition", "ok", "llm_tool_call",
-                     {"answer": result.answer, "answer_source": result.answer_source}, comp_ms)
+                     {"answer": result.answer, "answer_source": result.answer_source,
+                      "usage": comp_usage}, comp_ms)
 
         result.total_ms = _elapsed()
-        yield {"event": "completion", "data": _stream_payload(question, result)}
+        yield {"event": "completion", "data": _stream_payload(question, result, tokens)}
 
     def _model_id(self, role: str) -> str | None:
         """Best-effort model id for a role, for the trace (None if not resolvable)."""
@@ -387,7 +408,7 @@ class SimplePipeline:
             return None
 
 
-def _stream_payload(question: str, r: "PipelineResult") -> dict:
+def _stream_payload(question: str, r: "PipelineResult", tokens: dict | None = None) -> dict:
     """The terminal SSE payload — the same shape the JSON CLI/endpoint returns."""
     return {
         "question": question,
@@ -397,6 +418,9 @@ def _stream_payload(question: str, r: "PipelineResult") -> dict:
         "answer_text": r.answer,
         "answer_source": r.answer_source,
         "chart": r.chart,
+        "token_usage": tokens or {
+            "input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "llm_calls": 0
+        },
         "verdict": (
             {"verdict": r.verdict.verdict, "reason": r.verdict.reason} if r.verdict else None
         ),

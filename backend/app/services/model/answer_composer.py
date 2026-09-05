@@ -14,7 +14,7 @@ import json
 
 from strands import Agent
 
-from app.services.model.groq_client import agent_text
+from app.services.model.groq_client import agent_text_with_usage
 
 _SYSTEM = """You are a finance assistant that writes ONE concise, factual sentence (max 40 words)
 answering the user's question from the provided result rows.
@@ -36,6 +36,7 @@ Strict rules:
 class AnswerComposer:
     def __init__(self, agent_factory, *, sample_rows: int = 10) -> None:
         self._agent_factory = agent_factory
+        self.last_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
         self._sample_rows = sample_rows
 
     @property
@@ -69,4 +70,5 @@ class AnswerComposer:
             f"Result (JSON): {json.dumps(payload, default=str)}\n"
             "Write the one-sentence answer."
         )
-        return agent_text(agent, prompt).strip()
+        text, self.last_usage = agent_text_with_usage(agent, prompt)
+        return text.strip()

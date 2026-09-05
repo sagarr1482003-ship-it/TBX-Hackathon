@@ -188,6 +188,24 @@ def _declared_limit(root: exp.Expression) -> int | None:
     return None
 
 
+def _is_row_listing(root: exp.Expression) -> bool:
+    """True when the query returns raw rows that should be capped by a default LIMIT.
+
+    A query is NOT a row listing (so gets no injected LIMIT) when it is an aggregate/grouped
+    query — it has a GROUP BY, or every projection is an aggregate (a scalar aggregate like
+    COUNT(*)/SUM(...)). Those return a bounded number of rows and a LIMIT would be misleading.
+    """
+    select = root if isinstance(root, exp.Select) else root.find(exp.Select)
+    if select is None:
+        return True  # be safe: cap unknown shapes
+    if select.args.get("group"):
+        return False  # grouped -> bounded rows
+    projections = select.expressions or []
+    if projections and all(p.find(exp.AggFunc) is not None for p in projections):
+        return False  # scalar aggregate (e.g. SELECT COUNT(*), SUM(x)) -> single row
+    return True
+
+
 class SqlValidator:
     """Static SQLGlot AST validator enforcing the read-only allowlist."""
 
@@ -297,7 +315,7 @@ class SqlValidator:
                 category="row_limit_too_large",
             )
         applied_row_limit = limit
-        if limit is None and intent_family in LISTING_FAMILIES:
+        if limit is None and intent_family in LISTING_FAMILIES and _is_row_listing(root):
             root = root.limit(self.settings.default_row_limit)
             applied_row_limit = self.settings.default_row_limit
 

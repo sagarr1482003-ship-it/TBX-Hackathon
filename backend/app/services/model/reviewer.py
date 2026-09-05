@@ -14,7 +14,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 from strands import Agent
 
-from app.services.model.groq_client import agent_text
+from app.services.model.groq_client import agent_text_with_usage
 
 _SYSTEM = """You are a meticulous reviewer of PostgreSQL queries for a bank finance assistant.
 Given a question and a candidate SELECT, decide whether it correctly and safely answers the
@@ -62,6 +62,7 @@ def parse_verdict(text: str) -> ReviewVerdict:
 class ReviewerAgent:
     def __init__(self, agent_factory) -> None:
         self._agent_factory = agent_factory
+        self.last_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
 
     @property
     def system_prompt(self) -> str:
@@ -73,5 +74,5 @@ class ReviewerAgent:
             f"Question: {resolved_question}\nCandidate SQL:\n{candidate_sql}\n"
             "Give your VERDICT and REASON."
         )
-        text = agent_text(agent, prompt)
+        text, self.last_usage = agent_text_with_usage(agent, prompt)
         return parse_verdict(text)
