@@ -418,6 +418,9 @@ class Settings(BaseSettings):
     postgres_reader_password: str | None = Field(default=None)
     postgres_reader_dsn: str | None = Field(default=None)
     reader_pool_size: int = Field(default=DEFAULT_READER_POOL_SIZE)
+    # EXPLAIN cost gate: reject a query whose planner-estimated total cost exceeds this, before
+    # executing it (catches a runaway plan). Generous default for the demo dataset; tune per DB.
+    max_plan_cost: float = Field(default=5_000_000.0)
     # AES-256 key (base64) for encrypting sensitive PII columns at rest. Generate with
     # `python -m scripts.gen_pii_key`. Blank => PII encryption disabled (dev only; a warning
     # is logged at startup, mirroring the unauthenticated-API warning).

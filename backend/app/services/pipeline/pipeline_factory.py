@@ -52,6 +52,22 @@ def make_executor(reader_dsn: str, cipher=None, sensitive=frozenset(), preview_c
                         row[col] = cipher.decrypt(row[col])
         return columns, rows, total
 
+    def explain_cost(sql: str) -> float:
+        """Return the planner's estimated total cost via EXPLAIN (no execution).
+
+        A cheap deterministic guardrail: the pipeline rejects a query whose estimated cost is
+        far above what any demo query should need, catching a runaway plan before it runs.
+        """
+        with pool.connection() as conn, conn.cursor() as cur:
+            cur.execute(f"EXPLAIN (FORMAT JSON) {sql}")
+            plan = cur.fetchone()[0]
+        # plan is a list[dict] with a top-level "Plan" carrying "Total Cost".
+        try:
+            return float(plan[0]["Plan"]["Total Cost"])
+        except (KeyError, IndexError, TypeError):
+            return 0.0
+
+    execute.explain_cost = explain_cost  # attach so the pipeline can call it
     return execute, pool
 
 
@@ -93,5 +109,6 @@ def build_pipeline():
         ReviewerAgent(rev_agent),
         executor=executor,
         answer_composer=AnswerComposer(comp_agent),
+        max_plan_cost=s.max_plan_cost,
     )
     return pipeline, pool

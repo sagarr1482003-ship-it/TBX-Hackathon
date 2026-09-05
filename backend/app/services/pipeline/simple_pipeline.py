@@ -79,6 +79,7 @@ class SimplePipeline:
         intent_family: str = "transaction_lookup",
         executor=None,
         answer_composer=None,
+        max_plan_cost: float | None = None,
     ) -> None:
         # The generator itself asks a follow-up when a question is under-specified (no separate
         # clarifier agent/call). executor(sql) -> (columns, rows) runs approved SQL read-only.
@@ -89,6 +90,7 @@ class SimplePipeline:
         self._intent = intent_family
         self._executor = executor
         self._answer_composer = answer_composer
+        self._max_plan_cost = max_plan_cost
         self._sensitive = sensitive_columns(SEED_CONTRACTS)
 
     def run(self, question: str) -> PipelineResult:
@@ -284,6 +286,36 @@ class SimplePipeline:
 
         # 4) execute + compose
         if self._executor is not None and review.verdict == "approve":
+            # 4a) EXPLAIN cost gate — deterministic guardrail: reject a runaway plan pre-execution.
+            explain_cost = getattr(self._executor, "explain_cost", None)
+            if explain_cost is not None and self._max_plan_cost is not None:
+                yield ev("plan_inspection", "start", "deterministic_guardrail",
+                         {"guardrail": "explain_cost_gate", "max_plan_cost": self._max_plan_cost})
+                t = time.monotonic()
+                try:
+                    cost = await asyncio.to_thread(explain_cost, canonical)
+                except Exception as exc:
+                    cost = None
+                    plan_detail = {"guardrail": "explain_cost_gate", "error": str(exc)[:150]}
+                    yield ev("plan_inspection", "error", "deterministic_guardrail", plan_detail,
+                             int((time.monotonic() - t) * 1000))
+                if cost is not None:
+                    plan_ms = int((time.monotonic() - t) * 1000)
+                    if cost > self._max_plan_cost:
+                        result.validation_ok = False
+                        result.validation_reason = (
+                            f"query plan cost {cost:.0f} exceeds limit {self._max_plan_cost:.0f}"
+                        )
+                        result.total_ms = _elapsed()
+                        yield ev("plan_inspection", "rejected", "deterministic_guardrail",
+                                 {"guardrail": "explain_cost_gate", "cost": cost,
+                                  "max_plan_cost": self._max_plan_cost}, plan_ms)
+                        yield {"event": "completion", "data": _stream_payload(question, result)}
+                        return
+                    yield ev("plan_inspection", "ok", "deterministic_guardrail",
+                             {"guardrail": "explain_cost_gate", "cost": cost,
+                              "max_plan_cost": self._max_plan_cost}, plan_ms)
+
             # Query_Executor — read-only DB guardrail (tbx_reader, statement timeout, row cap).
             yield ev("execution", "start", "db",
                      {"guardrail": "read_only_executor", "sql": canonical})
