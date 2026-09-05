@@ -432,9 +432,14 @@ export function agentEventsToSteps(
     if (evt.event === 'completion') continue
     if (seen.has(evt.event)) continue
 
-    const d = evt.data ?? {}
-    const status = typeof d.status === 'string' ? d.status : undefined
+    const envelope = evt.data ?? {}
+    const status = typeof envelope.status === 'string' ? envelope.status : undefined
     if (status === 'start') continue
+    // Enriched backend events nest the stage payload under `detail`; older/flat events put it at
+    // the top of `data`. Read detail first, fall back to the envelope.
+    const d = (envelope.detail && typeof envelope.detail === 'object'
+      ? { ...envelope, ...(envelope.detail as Record<string, unknown>) }
+      : envelope) as Record<string, unknown>
 
     let step: TraceStep | undefined
     const details: TraceDetail[] = []
@@ -448,7 +453,7 @@ export function agentEventsToSteps(
         break
       }
       case 'sql_generation': {
-        if (status !== 'done') break
+        if (status !== 'ok' && status !== 'done') break
         step = { kind: 'compute', label: 'Generated SQL' }
         const sql = text(d.sql)
         if (sql) details.push({ label: 'Generated SQL', value: sql, format: 'sql' })
@@ -502,6 +507,22 @@ export function agentEventsToSteps(
             format: 'text',
           })
         }
+        break
+      }
+      case 'plan_inspection': {
+        if (status === 'ok') {
+          step = { kind: 'guardrail', label: 'Checked query plan cost (EXPLAIN)' }
+          if (d.cost != null) details.push({ label: 'Plan cost', value: String(d.cost), format: 'text' })
+        } else if (status === 'rejected') {
+          step = { kind: 'guardrail', label: 'Rejected — query plan too expensive' }
+          if (d.cost != null) details.push({ label: 'Plan cost', value: String(d.cost), format: 'text' })
+        }
+        break
+      }
+      case 'computation': {
+        step = { kind: 'compute', label: 'Ran financial calculators' }
+        const tools = Array.isArray(d.tools) ? (d.tools as string[]).join(', ') : undefined
+        if (tools) details.push({ label: 'Tools', value: tools, format: 'text' })
         break
       }
       case 'clarification': {
