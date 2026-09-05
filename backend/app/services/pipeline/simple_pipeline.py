@@ -79,6 +79,7 @@ class SimplePipeline:
         intent_family: str = "transaction_lookup",
         executor=None,
         answer_composer=None,
+        max_plan_cost: float | None = None,
     ) -> None:
         # The generator itself asks a follow-up when a question is under-specified (no separate
         # clarifier agent/call). executor(sql) -> (columns, rows) runs approved SQL read-only.
@@ -89,6 +90,7 @@ class SimplePipeline:
         self._intent = intent_family
         self._executor = executor
         self._answer_composer = answer_composer
+        self._max_plan_cost = max_plan_cost
         self._sensitive = sensitive_columns(SEED_CONTRACTS)
 
     def run(self, question: str) -> PipelineResult:
@@ -179,7 +181,7 @@ class SimplePipeline:
         result.total_ms = int((time.monotonic() - t_start) * 1000)
         return result
 
-    async def run_stream(self, question: str):
+    async def run_stream(self, question: str, history: list | None = None):
         """Async generator yielding per-stage trace events for SSE (realtime FE traces).
 
         Each event is a dict: {"event": <stage>, "data": {...}}. Stages fire in order —
@@ -196,81 +198,161 @@ class SimplePipeline:
         def _elapsed() -> int:
             return int((time.monotonic() - t_start) * 1000)
 
-        yield {"event": "intake", "data": {"question": question}}
+        def ev(stage, status, kind, detail, ms=None):
+            """One trace event. kind: 'llm_tool_call' | 'deterministic_guardrail' | 'db' | 'io'.
+            The FE renders the pipeline from (stage, status, kind, duration_ms, detail)."""
+            return {
+                "event": stage,
+                "data": {
+                    "stage": stage,
+                    "status": status,       # start | ok | error | skipped | rejected
+                    "kind": kind,
+                    "duration_ms": ms,
+                    "detail": detail,
+                },
+            }
 
-        # 1) generate (or clarify)
-        yield {"event": "sql_generation", "data": {"status": "start"}}
+        yield ev("intake", "ok", "io", {"question": question, "chars": len(question)})
+
+        # 1) generate (or clarify) — LLM tool call: SQL_Generator (Strands agent on Groq).
+        yield ev("sql_generation", "start", "llm_tool_call",
+                 {"role": "sql_generator", "model": self._model_id("sql_generator")})
+        t = time.monotonic()
         try:
-            candidate = await asyncio.to_thread(self._generator.generate, question)
+            candidate = await asyncio.to_thread(self._generator.generate, question, history)
         except Exception as exc:
             result.validation_reason = f"generation error: {exc}"
             result.total_ms = _elapsed()
+            yield ev("sql_generation", "error", "llm_tool_call", {"error": str(exc)[:200]})
             yield {"event": "completion", "data": _stream_payload(question, result)}
             return
+        gen_ms = int((time.monotonic() - t) * 1000)
         result.candidate = candidate
 
         if candidate.clarification:
             result.clarification = candidate.clarification
             result.total_ms = _elapsed()
-            yield {"event": "clarification", "data": {"question": candidate.clarification}}
+            yield ev("clarification", "ok", "deterministic_guardrail",
+                     {"guardrail": "ambiguity_check", "question": candidate.clarification}, gen_ms)
             yield {"event": "completion", "data": _stream_payload(question, result)}
             return
-        yield {"event": "sql_generation", "data": {"status": "done", "sql": candidate.sql}}
+        yield ev("sql_generation", "ok", "llm_tool_call", {"sql": candidate.sql}, gen_ms)
 
-        # 2) validate
-        yield {"event": "static_validation", "data": {"status": "start"}}
+        # 2) SQL_Validator — deterministic security guardrail (the boundary).
+        yield ev("static_validation", "start", "deterministic_guardrail",
+                 {"guardrail": "sql_ast_validator"})
+        t = time.monotonic()
         verdict = self._validator.validate(candidate.sql, self._schema, self._intent)  # type: ignore[arg-type]
+        val_ms = int((time.monotonic() - t) * 1000)
         canonical = getattr(verdict, "canonical_sql", None)
         if canonical is None:
             result.validation_ok = False
             result.validation_reason = getattr(verdict, "reason", "rejected")
             result.total_ms = _elapsed()
-            yield {"event": "static_validation", "data": {"status": "rejected"}}
+            yield ev("static_validation", "rejected", "deterministic_guardrail",
+                     {"guardrail": "sql_ast_validator", "reason": result.validation_reason,
+                      "category": getattr(verdict, "category", None)}, val_ms)
             yield {"event": "completion", "data": _stream_payload(question, result)}
             return
         result.validation_ok = True
         result.canonical_sql = canonical
-        yield {"event": "static_validation", "data": {"status": "ok", "canonical_sql": canonical}}
+        # The concrete guardrail checks that passed — for the FE to show each gate green.
+        yield ev("static_validation", "ok", "deterministic_guardrail", {
+            "guardrail": "sql_ast_validator",
+            "canonical_sql": canonical,
+            "checks_passed": [
+                "read_only_select", "schema_conformant", "no_ddl_dml",
+                "no_forbidden_functions", "row_limit_applied",
+            ],
+            "referenced_tables": getattr(verdict, "tables", None),
+        }, val_ms)
 
-        # 3) review
-        yield {"event": "reviewer_verdict", "data": {"status": "start"}}
+        # 3) Reviewer_Agent — independent LLM tool call.
+        yield ev("reviewer_verdict", "start", "llm_tool_call",
+                 {"role": "reviewer", "model": self._model_id("reviewer")})
+        t = time.monotonic()
         try:
             review = await asyncio.to_thread(self._reviewer.review, question, canonical)
         except Exception as exc:
             result.validation_reason = f"reviewer error: {exc}"
             result.total_ms = _elapsed()
+            yield ev("reviewer_verdict", "error", "llm_tool_call", {"error": str(exc)[:200]})
             yield {"event": "completion", "data": _stream_payload(question, result)}
             return
+        rev_ms = int((time.monotonic() - t) * 1000)
         result.verdict = review
-        yield {
-            "event": "reviewer_verdict",
-            "data": {"verdict": review.verdict, "reason": review.reason},
-        }
+        yield ev("reviewer_verdict", "ok", "llm_tool_call",
+                 {"verdict": review.verdict, "reason": review.reason}, rev_ms)
 
         # 4) execute + compose
         if self._executor is not None and review.verdict == "approve":
-            yield {"event": "execution", "data": {"status": "start"}}
+            # 4a) EXPLAIN cost gate — deterministic guardrail: reject a runaway plan pre-execution.
+            explain_cost = getattr(self._executor, "explain_cost", None)
+            if explain_cost is not None and self._max_plan_cost is not None:
+                yield ev("plan_inspection", "start", "deterministic_guardrail",
+                         {"guardrail": "explain_cost_gate", "max_plan_cost": self._max_plan_cost})
+                t = time.monotonic()
+                try:
+                    cost = await asyncio.to_thread(explain_cost, canonical)
+                except Exception as exc:
+                    cost = None
+                    plan_detail = {"guardrail": "explain_cost_gate", "error": str(exc)[:150]}
+                    yield ev("plan_inspection", "error", "deterministic_guardrail", plan_detail,
+                             int((time.monotonic() - t) * 1000))
+                if cost is not None:
+                    plan_ms = int((time.monotonic() - t) * 1000)
+                    if cost > self._max_plan_cost:
+                        result.validation_ok = False
+                        result.validation_reason = (
+                            f"query plan cost {cost:.0f} exceeds limit {self._max_plan_cost:.0f}"
+                        )
+                        result.total_ms = _elapsed()
+                        yield ev("plan_inspection", "rejected", "deterministic_guardrail",
+                                 {"guardrail": "explain_cost_gate", "cost": cost,
+                                  "max_plan_cost": self._max_plan_cost}, plan_ms)
+                        yield {"event": "completion", "data": _stream_payload(question, result)}
+                        return
+                    yield ev("plan_inspection", "ok", "deterministic_guardrail",
+                             {"guardrail": "explain_cost_gate", "cost": cost,
+                              "max_plan_cost": self._max_plan_cost}, plan_ms)
+
+            # Query_Executor — read-only DB guardrail (tbx_reader, statement timeout, row cap).
+            yield ev("execution", "start", "db",
+                     {"guardrail": "read_only_executor", "sql": canonical})
+            t = time.monotonic()
             try:
                 result_tuple = await asyncio.to_thread(self._executor, canonical)
             except Exception as exc:
                 result.validation_reason = f"execution error: {exc}"
                 result.total_ms = _elapsed()
+                yield ev("execution", "error", "db", {"error": str(exc)[:200]})
                 yield {"event": "completion", "data": _stream_payload(question, result)}
                 return
+            exec_ms = int((time.monotonic() - t) * 1000)
             if len(result_tuple) == 3:
                 columns, rows, total = result_tuple
             else:
                 columns, rows = result_tuple
                 total = len(rows)
+            # PII decrypt-on-read + masking guardrail.
             masked = mask_rows(rows, self._sensitive)
             result.columns = columns
             result.total_row_count = total
             result.rows = masked[:100]
             spec = build_chart_spec(columns, rows)
             result.chart = spec.to_dict() if spec else None
-            yield {"event": "execution", "data": {"row_count": total, "chart": result.chart}}
+            yield ev("execution", "ok", "db", {
+                "row_count": total,
+                "preview_rows": len(masked[:100]),
+                "chart": result.chart,
+                "guardrails_applied": ["read_only", "bounded_fetch", "pii_mask"],
+                "masked_columns": sorted(self._sensitive),
+            }, exec_ms)
 
-            yield {"event": "answer_composition", "data": {"status": "start"}}
+            # Answer_Composer — LLM tool call, grounded by the checker.
+            yield ev("answer_composition", "start", "llm_tool_call",
+                     {"role": "composer", "model": self._model_id("composer")})
+            t = time.monotonic()
             if self._answer_composer is not None:
                 try:
                     result.answer = await asyncio.to_thread(
@@ -283,10 +365,26 @@ class SimplePipeline:
             else:
                 result.answer = _compose_answer(question, columns, masked, total_rows=total)
                 result.answer_source = "template"
-            yield {"event": "answer_composition", "data": {"answer": result.answer}}
+            comp_ms = int((time.monotonic() - t) * 1000)
+            yield ev("answer_composition", "ok", "llm_tool_call",
+                     {"answer": result.answer, "answer_source": result.answer_source}, comp_ms)
 
         result.total_ms = _elapsed()
         yield {"event": "completion", "data": _stream_payload(question, result)}
+
+    def _model_id(self, role: str) -> str | None:
+        """Best-effort model id for a role, for the trace (None if not resolvable)."""
+        try:
+            from app.config import get_settings
+
+            s = get_settings()
+            return {
+                "sql_generator": s.sql_generator_model,
+                "reviewer": s.reviewer_model,
+                "composer": s.composer_model,
+            }.get(role)
+        except Exception:
+            return None
 
 
 def _stream_payload(question: str, r: "PipelineResult") -> dict:

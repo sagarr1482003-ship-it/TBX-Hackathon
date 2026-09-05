@@ -98,9 +98,9 @@ class SqlGenerator:
     def system_prompt(self) -> str:
         return _SYSTEM
 
-    def generate(self, resolved_question: str) -> SqlCandidate:
+    def generate(self, resolved_question: str, history: list | None = None) -> SqlCandidate:
         agent: Agent = self._agent_factory()
-        prompt = f"Question: {resolved_question}\nSQL:"
+        prompt = self._with_history(resolved_question, history)
         text = agent_text(agent, prompt)
         # The generator may ask a follow-up instead of writing SQL (one call, no extra agent).
         m = re.search(r"CLARIFY:\s*(.+)", text, re.IGNORECASE | re.DOTALL)
@@ -112,3 +112,19 @@ class SqlGenerator:
         if not sql:
             raise ValueError(f"SQL_Generator: no SQL in model output: {text[:200]!r}")
         return SqlCandidate(sql=sql)
+
+    @staticmethod
+    def _with_history(question: str, history: list | None) -> str:
+        """Prepend recent (question -> SQL) turns so a follow-up resolves against prior context.
+
+        ``history`` is a list of objects with ``.question`` and ``.resolved_sql`` (Turn). Only the
+        last few are included; a follow-up like "what about credits?" then edits the prior SQL.
+        """
+        if not history:
+            return f"Question: {question}\nSQL:"
+        lines = ["Conversation so far (resolve follow-ups against the previous SQL):"]
+        for t in history[-3:]:
+            if getattr(t, "resolved_sql", None):
+                lines.append(f"- Q: {t.question}\n  SQL: {t.resolved_sql}")
+        lines.append(f"\nQuestion: {question}\nSQL:")
+        return "\n".join(lines)
