@@ -140,31 +140,39 @@ class SimplePipeline:
         if self._executor is not None and review.verdict == "approve":
             t0 = time.monotonic()
             try:
-                columns, rows = self._executor(canonical)
+                result_tuple = self._executor(canonical)
             except Exception as exc:
                 result.validation_reason = f"execution error: {exc}"
                 result.total_ms = int((time.monotonic() - t_start) * 1000)
                 return result
+            # Executor returns (columns, rows) or (columns, rows, total_row_count). The rows are
+            # already a bounded preview; total_row_count is the true count from the DB.
+            if len(result_tuple) == 3:
+                columns, rows, total = result_tuple
+            else:
+                columns, rows = result_tuple
+                total = len(rows)
             masked = mask_rows(rows, self._sensitive)
             result.columns = columns
-            # Store a bounded preview (not the whole set); keep the true total separately.
-            result.total_row_count = len(masked)
-            result.rows = masked[:100]
-            # Chart spec from the raw executed rows (numeric values; labels are non-sensitive).
+            result.total_row_count = total
+            result.rows = masked[:100]  # rows are already a bounded preview from the executor
+            # Chart spec from the preview rows (numeric values; labels are non-sensitive).
             spec = build_chart_spec(columns, rows)
             result.chart = spec.to_dict() if spec else None
             # LLM answer composer (Option A) with the deterministic template as grounded fallback.
             if self._answer_composer is not None:
                 t1 = time.monotonic()
                 try:
-                    result.answer = self._answer_composer.compose(question, columns, masked)
+                    result.answer = self._answer_composer.compose(
+                        question, columns, masked, total_rows=total
+                    )
                     result.answer_source = "llm"
                 except Exception:
-                    result.answer = _compose_answer(question, columns, masked)
+                    result.answer = _compose_answer(question, columns, masked, total_rows=total)
                     result.answer_source = "template_fallback"
                 result.stage_ms["answer_composition"] = int((time.monotonic() - t1) * 1000)
             else:
-                result.answer = _compose_answer(question, columns, masked)
+                result.answer = _compose_answer(question, columns, masked, total_rows=total)
                 result.answer_source = "template"
             result.stage_ms["execution"] = int((time.monotonic() - t0) * 1000)
 
@@ -172,10 +180,13 @@ class SimplePipeline:
         return result
 
 
-def _compose_answer(question: str, columns: list[str], rows: list[dict]) -> str:
+def _compose_answer(
+    question: str, columns: list[str], rows: list[dict], total_rows: int | None = None
+) -> str:
     """A minimal deterministic answer from executed rows (LLM does not touch numbers).
 
-    Single scalar -> state it directly; otherwise summarise the row count and show the top rows.
+    Single scalar -> state it directly; otherwise summarise the TRUE total row count (from the
+    DB) and show the top preview rows.
     """
     if not rows:
         return "No records match your question."
@@ -185,7 +196,8 @@ def _compose_answer(question: str, columns: list[str], rows: list[dict]) -> str:
     if len(rows) == 1:
         pairs = ", ".join(f"{c} = {rows[0][c]}" for c in columns)
         return pairs
+    total = total_rows if total_rows is not None else len(rows)
     head = rows[:5]
     lines = [", ".join(f"{c}={r[c]}" for c in columns) for r in head]
-    more = f" (showing 5 of {len(rows)})" if len(rows) > 5 else ""
-    return f"{len(rows)} rows{more}:\n" + "\n".join(lines)
+    more = f" (showing 5 of {total})" if total > 5 else ""
+    return f"{total} rows{more}:\n" + "\n".join(lines)

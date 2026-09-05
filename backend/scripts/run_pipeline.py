@@ -27,7 +27,7 @@ _DEFAULT_QUESTIONS = [
 ]
 
 
-def _make_executor(reader_dsn: str, cipher=None, sensitive=frozenset()):
+def _make_executor(reader_dsn: str, cipher=None, sensitive=frozenset(), preview_cap: int = 100):
     """Return (executor, pool). A pre-warmed read-only pool keeps latency low: connections are
     opened once (not per query) and each is pre-configured read-only with search_path=finance and
     a 10s statement timeout, so a checkout is immediately ready to run.
@@ -52,15 +52,23 @@ def _make_executor(reader_dsn: str, cipher=None, sensitive=frozenset()):
 
     def execute(sql: str):
         with pool.connection() as conn, conn.cursor() as cur:
+            # Bounded fetch: materialise only the preview rows, never the whole result set.
             cur.execute(sql)
             columns = [d.name for d in cur.description] if cur.description else []
-            rows = [dict(zip(columns, r)) for r in cur.fetchall()]
+            preview = cur.fetchmany(preview_cap)
+            rows = [dict(zip(columns, r)) for r in preview]
+            # True total via a COUNT(*) over the same query — cheap, avoids holding all rows.
+            try:
+                cur.execute(f"SELECT count(*) FROM ({sql}) AS _sub")
+                total = int(cur.fetchone()[0])
+            except Exception:
+                total = len(rows)  # fallback: at least the preview count
         if cipher is not None and sensitive:
             for row in rows:
                 for col in sensitive:
                     if col in row and isinstance(row[col], str):
                         row[col] = cipher.decrypt(row[col])
-        return columns, rows
+        return columns, rows, total
 
     return execute, pool
 

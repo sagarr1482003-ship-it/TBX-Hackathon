@@ -42,20 +42,25 @@ class AnswerComposer:
     def system_prompt(self) -> str:
         return _SYSTEM
 
-    def compose(self, question: str, columns: list[str], rows: list[dict]) -> str:
+    def compose(
+        self, question: str, columns: list[str], rows: list[dict], total_rows: int | None = None
+    ) -> str:
         agent: Agent = self._agent_factory()
         # The LLM NEVER receives a large result set: cap the sample hard. A big listing is
         # summarised by its total_rows count, not enumerated — this keeps tokens/latency bounded
         # and grounding tight regardless of whether the query returned 1 row or 1000.
         sample = rows[: self._sample_rows]
+        total = total_rows if total_rows is not None else len(rows)
         payload = {
             "columns": columns,
             "sample_rows": sample,
-            "total_rows": len(rows),
+            "total_rows": total,
             "note": (
-                "sample_rows is a preview; there are total_rows in all. "
-                "Summarise counts/totals; do not claim to list every row."
-                if len(rows) > len(sample)
+                "sample_rows is ONLY a preview of total_rows results. Answer with the "
+                "total_rows count and, if present, the date range. Do NOT state or characterise "
+                "any amount, value, or that rows share a value — the preview is not "
+                "representative of all rows."
+                if total > len(sample)
                 else "sample_rows is the complete result."
             ),
         }
