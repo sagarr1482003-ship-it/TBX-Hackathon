@@ -45,14 +45,18 @@ class PipelineResult:
     verdict: ReviewVerdict | None = None
     rows: list[dict] | None = None
     columns: list[str] | None = None
+    total_row_count: int | None = None
     answer: str | None = None
     answer_source: str | None = None  # "llm" | "template" | "template_fallback"
     chart: dict | None = None  # ChartSpec.to_dict() when the result is chartable
+    clarification: str | None = None  # follow-up question when the turn needs more info
     total_ms: int = 0
     stage_ms: dict[str, int] = field(default_factory=dict)
 
     @property
     def outcome(self) -> str:
+        if self.clarification is not None:
+            return "clarification_requested"
         if self.candidate is None:
             return "generation_failed"
         if not self.validation_ok:
@@ -75,11 +79,10 @@ class SimplePipeline:
         intent_family: str = "transaction_lookup",
         executor=None,
         answer_composer=None,
+        clarifier=None,
     ) -> None:
-        # executor(sql) -> (columns, rows) runs the approved SQL read-only. Optional so the
-        # no-DB unit tests still exercise generate/validate/review without a database.
-        # answer_composer.compose(question, columns, rows) -> str writes NL prose; when absent,
-        # a deterministic template sentence is used (grounded by construction).
+        # clarifier.decide(question) -> ClarifyDecision runs first: an under-specified question
+        # ends the turn with a follow-up instead of a guessed answer (ambiguity guardrail).
         self._generator = generator
         self._reviewer = reviewer
         self._validator = SqlValidator()
@@ -87,11 +90,25 @@ class SimplePipeline:
         self._intent = intent_family
         self._executor = executor
         self._answer_composer = answer_composer
+        self._clarifier = clarifier
         self._sensitive = sensitive_columns(SEED_CONTRACTS)
 
     def run(self, question: str) -> PipelineResult:
         result = PipelineResult(question=question)
         t_start = time.monotonic()
+
+        # 0) clarify: an under-specified/out-of-scope question ends with a follow-up, no SQL.
+        if self._clarifier is not None:
+            t0 = time.monotonic()
+            try:
+                decision = self._clarifier.decide(question)
+            except Exception:
+                decision = None  # clarifier failure is non-fatal; fall through to generation
+            result.stage_ms["clarification"] = int((time.monotonic() - t0) * 1000)
+            if decision is not None and not decision.proceed:
+                result.clarification = decision.question
+                result.total_ms = int((time.monotonic() - t_start) * 1000)
+                return result
 
         # 1) generate
         t0 = time.monotonic()
@@ -139,7 +156,9 @@ class SimplePipeline:
                 return result
             masked = mask_rows(rows, self._sensitive)
             result.columns = columns
-            result.rows = masked
+            # Store a bounded preview (not the whole set); keep the true total separately.
+            result.total_row_count = len(masked)
+            result.rows = masked[:100]
             # Chart spec from the raw executed rows (numeric values; labels are non-sensitive).
             spec = build_chart_spec(columns, rows)
             result.chart = spec.to_dict() if spec else None
