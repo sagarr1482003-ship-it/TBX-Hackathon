@@ -13,8 +13,6 @@ import sys
 from app.config import get_settings
 from app.services.model.answer_composer import _SYSTEM as COMPOSER_SYSTEM
 from app.services.model.answer_composer import AnswerComposer
-from app.services.model.clarifier import _SYSTEM as CLARIFIER_SYSTEM
-from app.services.model.clarifier import Clarifier
 from app.services.model.groq_client import agent_for
 from app.services.model.reviewer import _SYSTEM as REVIEWER_SYSTEM
 from app.services.model.reviewer import ReviewerAgent
@@ -92,12 +90,6 @@ def _build():
             max_tokens=s.composer_max_tokens,
         )
 
-    def clarify_agent():
-        return agent_for(
-            key, s.sql_generator_model, CLARIFIER_SYSTEM, base_url=s.groq_base_url,
-            reasoning_effort="low", max_tokens=256,
-        )
-
     reader_dsn = s.postgres_reader_dsn or s.postgres_dsn
     cipher = None
     if s.pii_encryption_key:
@@ -114,7 +106,6 @@ def _build():
         ReviewerAgent(rev_agent),
         executor=executor,
         answer_composer=AnswerComposer(comp_agent),
-        clarifier=Clarifier(clarify_agent),
     )
     return pipeline, pool
 

@@ -79,10 +79,9 @@ class SimplePipeline:
         intent_family: str = "transaction_lookup",
         executor=None,
         answer_composer=None,
-        clarifier=None,
     ) -> None:
-        # clarifier.decide(question) -> ClarifyDecision runs first: an under-specified question
-        # ends the turn with a follow-up instead of a guessed answer (ambiguity guardrail).
+        # The generator itself asks a follow-up when a question is under-specified (no separate
+        # clarifier agent/call). executor(sql) -> (columns, rows) runs approved SQL read-only.
         self._generator = generator
         self._reviewer = reviewer
         self._validator = SqlValidator()
@@ -90,27 +89,13 @@ class SimplePipeline:
         self._intent = intent_family
         self._executor = executor
         self._answer_composer = answer_composer
-        self._clarifier = clarifier
         self._sensitive = sensitive_columns(SEED_CONTRACTS)
 
     def run(self, question: str) -> PipelineResult:
         result = PipelineResult(question=question)
         t_start = time.monotonic()
 
-        # 0) clarify: an under-specified/out-of-scope question ends with a follow-up, no SQL.
-        if self._clarifier is not None:
-            t0 = time.monotonic()
-            try:
-                decision = self._clarifier.decide(question)
-            except Exception:
-                decision = None  # clarifier failure is non-fatal; fall through to generation
-            result.stage_ms["clarification"] = int((time.monotonic() - t0) * 1000)
-            if decision is not None and not decision.proceed:
-                result.clarification = decision.question
-                result.total_ms = int((time.monotonic() - t_start) * 1000)
-                return result
-
-        # 1) generate
+        # 1) generate — the generator either returns SQL or asks ONE follow-up (same call).
         t0 = time.monotonic()
         try:
             candidate = self._generator.generate(question)
@@ -120,6 +105,12 @@ class SimplePipeline:
             return result
         result.candidate = candidate
         result.stage_ms["sql_generation"] = int((time.monotonic() - t0) * 1000)
+
+        # Under-specified/out-of-scope -> the generator asked a follow-up; end the turn here.
+        if candidate.clarification:
+            result.clarification = candidate.clarification
+            result.total_ms = int((time.monotonic() - t_start) * 1000)
+            return result
 
         # 2) validate (security boundary — must pass before the reviewer sees it)
         t0 = time.monotonic()

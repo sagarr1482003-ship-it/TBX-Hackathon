@@ -32,6 +32,13 @@ Rules:
 - Prefer explicit column lists over SELECT *; never invent columns.
 - Output ONLY the SQL statement. No prose, no explanation, no markdown fences.
 
+If the question is too vague to turn into a single correct query, references data not in this
+schema, or is missing an essential detail (e.g. which account/bank/period when that is required),
+do NOT guess. Instead output exactly one line:
+CLARIFY: <one short follow-up question>
+Aggregate questions over all data (e.g. "total credit amount", "transactions per bank",
+"how many debits") ARE answerable — write SQL for those, do not clarify.
+
 Examples (question -> SQL):
 Q: How many debit transactions are there?
 SQL: SELECT count(*) FROM transaction WHERE transaction_type = 'debit'
@@ -53,11 +60,12 @@ SQL: SELECT date_trunc('month', transaction_date) AS month, count(*) AS txn_coun
 
 
 class SqlCandidate(BaseModel):
-    """The generator's parsed candidate (SQL only; tables/columns derived by the validator)."""
+    """The generator's parsed output: either a SQL candidate or a clarification request."""
 
-    sql: str = Field(description="One read-only PostgreSQL SELECT statement")
+    sql: str = Field(default="", description="One read-only PostgreSQL SELECT statement")
     tables: list[str] = Field(default_factory=list)
     columns: list[str] = Field(default_factory=list)
+    clarification: str | None = None  # set when the generator asks a follow-up instead of SQL
 
 
 def extract_sql(text: str) -> str:
@@ -94,6 +102,12 @@ class SqlGenerator:
         agent: Agent = self._agent_factory()
         prompt = f"Question: {resolved_question}\nSQL:"
         text = agent_text(agent, prompt)
+        # The generator may ask a follow-up instead of writing SQL (one call, no extra agent).
+        m = re.search(r"CLARIFY:\s*(.+)", text, re.IGNORECASE | re.DOTALL)
+        if m and "select" not in text.lower()[: m.start()]:
+            question = m.group(1).strip().split("\n")[0].strip()
+            if question:
+                return SqlCandidate(clarification=question)
         sql = extract_sql(text)
         if not sql:
             raise ValueError(f"SQL_Generator: no SQL in model output: {text[:200]!r}")
