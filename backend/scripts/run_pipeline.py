@@ -13,6 +13,8 @@ import sys
 from app.config import get_settings
 from app.services.model.answer_composer import _SYSTEM as COMPOSER_SYSTEM
 from app.services.model.answer_composer import AnswerComposer
+from app.services.model.clarifier import _SYSTEM as CLARIFIER_SYSTEM
+from app.services.model.clarifier import Clarifier
 from app.services.model.groq_client import agent_for
 from app.services.model.reviewer import _SYSTEM as REVIEWER_SYSTEM
 from app.services.model.reviewer import ReviewerAgent
@@ -90,6 +92,12 @@ def _build():
             max_tokens=s.composer_max_tokens,
         )
 
+    def clarify_agent():
+        return agent_for(
+            key, s.sql_generator_model, CLARIFIER_SYSTEM, base_url=s.groq_base_url,
+            reasoning_effort="low", max_tokens=256,
+        )
+
     reader_dsn = s.postgres_reader_dsn or s.postgres_dsn
     cipher = None
     if s.pii_encryption_key:
@@ -106,15 +114,72 @@ def _build():
         ReviewerAgent(rev_agent),
         executor=executor,
         answer_composer=AnswerComposer(comp_agent),
+        clarifier=Clarifier(clarify_agent),
     )
     return pipeline, pool
 
 
-def _run_one(pipeline: SimplePipeline, question: str) -> None:
+def _result_to_dict(question: str, r) -> dict:
+    """The full structured response for one turn — the object a frontend/consumer would use,
+    including the chart spec, the breakdown rows and a per-stage trace."""
+    trace = [
+        {"stage": stage, "duration_ms": ms}
+        for stage, ms in r.stage_ms.items()
+    ]
+    return {
+        "question": question,
+        "outcome": r.outcome,
+        "clarification": r.clarification,
+        "resolved_sql": r.canonical_sql,
+        "answer_text": r.answer,
+        "answer_source": r.answer_source,
+        "chart": r.chart,  # {type, label_field, value_field, points:[{label,value}]}
+        "verdict": (
+            {"verdict": r.verdict.verdict, "reason": r.verdict.reason} if r.verdict else None
+        ),
+        "breakdown": {
+            "columns": r.columns,
+            "rows": r.rows,  # sensitive columns already masked; capped preview
+            "total_row_count": r.total_row_count,
+        },
+        "validation_ok": r.validation_ok,
+        "validation_reason": r.validation_reason,
+        "total_ms": r.total_ms,
+        "trace": trace,
+    }
+
+
+def _persist(payload: dict) -> str:
+    """Write the full turn payload (with trace) to runs/<timestamp>.json and return the path."""
+    import datetime
+    import json
+    import pathlib
+
+    runs = pathlib.Path("runs")
+    runs.mkdir(exist_ok=True)
+    ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+    path = runs / f"turn-{ts}.json"
+    path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+    return str(path)
+
+
+def _run_one(pipeline: SimplePipeline, question: str, *, as_json: bool = False) -> None:
     r = pipeline.run(question)
+    payload = _result_to_dict(question, r)
+    saved = _persist(payload)
+
+    if as_json:
+        import json
+
+        print(json.dumps(payload, indent=2, default=str))
+        print(f"\n[saved full output + trace to {saved}]")
+        return
+
     print("=" * 72)
     print(f"Q: {question}")
     print(f"outcome: {r.outcome}   total: {r.total_ms} ms")
+    if r.clarification is not None:
+        print(f"CLARIFY: {r.clarification}")
     if r.canonical_sql:
         print(f"SQL: {r.canonical_sql}")
     if r.verdict:
@@ -131,6 +196,7 @@ def _run_one(pipeline: SimplePipeline, question: str) -> None:
         print(f"validation: REJECTED — {r.validation_reason}")
     print(f"stages: {r.stage_ms}")
     print(f"latency budget (<=10s): {'OK' if r.total_ms <= 10_000 else 'OVER 10s'}")
+    print(f"[full output + trace saved to {saved}]")
 
 
 def _silence_async_teardown_noise() -> None:
@@ -164,11 +230,14 @@ def _silence_async_teardown_noise() -> None:
 
 
 def main() -> None:
+    args = sys.argv[1:]
+    as_json = "--json" in args
+    args = [a for a in args if a != "--json"]
     pipeline, pool = _build()
-    questions = [" ".join(sys.argv[1:])] if len(sys.argv) > 1 else _DEFAULT_QUESTIONS
+    questions = [" ".join(args)] if args else _DEFAULT_QUESTIONS
     try:
         for q in questions:
-            _run_one(pipeline, q)
+            _run_one(pipeline, q, as_json=as_json)
     finally:
         pool.close()  # graceful pool shutdown
         _silence_async_teardown_noise()
