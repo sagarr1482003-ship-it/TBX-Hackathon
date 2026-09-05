@@ -45,7 +45,7 @@ The trace and the number-provenance are the product. Treat them as primary UI, n
 ### Monetary values are strings. Do not parse them into `number`.
 
 ```json
-{ "label": "Total vendor payouts", "value": "4823150.00", "currency": "INR" }
+{ "label": "Total HDFC debits", "value": "4823150.00", "currency": "INR" }
 ```
 
 Every monetary value crosses the wire as a decimal string because the backend computes money in exact
@@ -507,7 +507,7 @@ export interface ConfidenceSignal {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface AnomalyCallout {
-  /** The entity the flag is about (e.g. a vendor). */
+  /** The entity the flag is about (e.g. an account). */
   entity: string;
   /** DECIMAL STRING — the flagged value. */
   value: string;
@@ -868,7 +868,7 @@ export interface FailureCase {
 export interface BuddyCatalogue {
   metrics: Array<{ name: string; description: string; columns: string[] }>;
   dimensions: string[];
-  reconciliation_statuses: string[];
+  transaction_types: string[];
   date_coverage: { first: string; last: string };
 }
 
@@ -1051,7 +1051,7 @@ Message intent is a **hint for copywriting**, not final copy.
 | `clarification_exhausted` | "I asked twice and still can't pin it down." Suggest starting a fresh, fully-specified question. |
 | `confidence_below_threshold` | "I'm not confident enough to give you this number." This is a feature — say so plainly. Offer rephrase. |
 | `period_outside_coverage` | "I only have data from {first} to {last}." The dates **are** in the response; show them. |
-| `entity_not_found` | "I couldn't find that vendor/account." Suggest close matches or the catalogue. |
+| `entity_not_found` | "I couldn't find that account/bank." Suggest close matches or the catalogue. |
 | `repair_limit_reached` | "I couldn't write a query I trust for this." Suggest simplifying the question. |
 | `budget_exhausted` | "That took too long / too much work to answer safely." Offer retry with a narrower question. |
 | `provider_unavailable` | "The language model is unavailable right now." Infrastructure — retry later. |
@@ -1215,12 +1215,12 @@ Honest list. Do not guess at these — isolate them behind a seam so pinning the
 **Data**
 
 - **The organisers' dataset has not arrived.** Everything you see in development comes from the
-  **synthetic seed dataset**: ≥5,000 transactions, ≥200 vendor payouts, ≥40 vendors, ≥12 consecutive
-  months of history, ≥500 unreconciled transactions.
-- **Entity names, category values, reconciliation status values and the date coverage window in every
-  example below will change** when the real dataset lands. Do not hardcode vendor names, status
-  strings or date bounds. Read coverage from `/api/buddy/catalogue` (`date_coverage`) and statuses
-  from the same payload.
+  **synthetic seed dataset**: ≥5,000 transactions, ≥40 accounts, 10 banks, ≥12 consecutive months of
+  history, a mix of credit/debit transaction types.
+- **Bank codes, account balances and the date coverage window in every example below will change**
+  when the real dataset lands. Do not hardcode bank codes, account IDs or date bounds. Read coverage
+  from `/api/buddy/catalogue` (`date_coverage`) and transaction types from the same payload
+  (`transaction_types`).
 - `synthetic_data: true` on a `TurnResponse` means the figures are from the seed dataset. **Badge it
   visibly** — a demo screenshot of synthetic numbers presented as real is a credibility problem.
 - The **currency is read from the dataset**, not fixed. Examples use `INR`. Always render
@@ -1268,8 +1268,9 @@ Four `TurnResponse` fixtures cover the whole outcome space: `answered`, `clarifi
 
 ## Appendix: example payloads
 
-Figures below reflect the **synthetic seed dataset** shape only. Vendor names, categories, statuses
-and dates will change when the organisers' dataset arrives.
+Figures below reflect the **synthetic seed dataset** shape only — the organiser bank/account/
+transaction schema (no vendor, payout or reconciliation tables exist). Bank codes, amounts and
+dates will change when the organisers' dataset arrives.
 
 ### A. `POST /api/sessions` → 200
 
@@ -1278,10 +1279,10 @@ and dates will change when the organisers' dataset arrives.
   "session_id": "8f1c3d2a-5e47-4b91-9c0d-2a7e5f1b4c88",
   "surface": "finance",
   "starter_questions": [
-    "How much did we spend on vendor payouts last month?",
-    "Which vendors did we pay the most in the last quarter?",
-    "How many transactions are still unreconciled?",
-    "What was our total spend by category last month?"
+    "How much did we debit across our accounts last month?",
+    "Which bank holds our largest total account balance?",
+    "How many transactions don't have a UTR recorded?",
+    "What was our total credit amount by bank last month?"
   ],
   "dataset_version": 1,
   "synthetic_data": true
@@ -1295,35 +1296,36 @@ and dates will change when the organisers' dataset arrives.
   "turn_id": "b2d94e17-6c05-4a3f-8e21-9f77a0c4d513",
   "session_id": "8f1c3d2a-5e47-4b91-9c0d-2a7e5f1b4c88",
   "outcome": "answered",
-  "answer_text": "Vendor payouts totalled INR 4,823,150.00 between 1 June 2025 and 30 June 2025 across 187 payouts [c1]. The largest share went to Northwind Logistics at INR 812,400.00 [c2].",
-  "resolved_question": "What was the total value of vendor payouts between 2025-06-01 and 2025-06-30?",
+  "answer_text": "Debits from HDFC accounts totalled INR 4,823,150.00 between 1 June 2025 and 30 June 2025 across 187 transactions [c1]. The largest single account's debit total was INR 812,400.00 [c2].",
+  "resolved_question": "What was the total debit amount for HDFC accounts between 2025-06-01 and 2025-06-30?",
   "resolved_date_range": ["2025-06-01", "2025-06-30"],
-  "executed_sql": "SELECT v.vendor_name, SUM(p.amount) AS total_amount FROM finance.vendor_payouts p JOIN finance.vendors v ON v.vendor_id = p.vendor_id WHERE p.payout_date >= '2025-06-01' AND p.payout_date <= '2025-06-30' AND p.dataset_version = 1 GROUP BY v.vendor_name ORDER BY total_amount DESC",
+  "executed_sql": "SELECT a.account_id, SUM(t.transaction_amount) AS total_amount FROM finance.transaction t JOIN finance.account a ON a.account_id = t.account_id WHERE a.bank_code = 'HDFC' AND t.transaction_type = 'debit' AND t.transaction_date >= '2025-06-01' AND t.transaction_date < '2025-07-01' AND t.dataset_version = 1 GROUP BY a.account_id ORDER BY total_amount DESC",
   "applied_filters": [
-    { "dimension": "payout_date", "expression": "2025-06-01 to 2025-06-30 inclusive", "excluded_record_count": null }
+    { "dimension": "transaction_date", "expression": "2025-06-01 to 2025-06-30 inclusive", "excluded_record_count": null },
+    { "dimension": "bank_code", "expression": "HDFC", "excluded_record_count": null }
   ],
   "excluded_record_count": null,
-  "metric_name": "vendor_spend_over_period",
+  "metric_name": "account_debit_total_over_period",
   "resolution_path": "metric_layer",
   "breakdown_columns": [
-    { "label": "vendor_name",  "value_type": "text",     "currency": null },
+    { "label": "account_id",   "value_type": "text",     "currency": null },
     { "label": "total_amount", "value_type": "monetary", "currency": "INR" }
   ],
   "breakdown_preview": [
-    { "vendor_name": "Northwind Logistics", "total_amount": "812400.00" },
-    { "vendor_name": "Acme Industrial",     "total_amount": "654210.50" },
-    { "vendor_name": "Belmont Supplies",    "total_amount": "498375.00" }
+    { "account_id": "acfbe204-7541-492c-a352-040aa984bedc", "total_amount": "812400.00" },
+    { "account_id": "6f306737-dfa8-4bf7-8003-be64034b8dea", "total_amount": "654210.50" },
+    { "account_id": "5cecd2c2-f075-4bbd-a08b-b156ca48dc7e", "total_amount": "498375.00" }
   ],
   "total_row_count": 38,
   "computation_records": [
     {
       "id": "c1",
-      "label": "Total vendor payouts",
+      "label": "Total HDFC debits",
       "value": "4823150.00",
       "unrounded_value": "4823150.000000",
       "unit": null,
       "currency": "INR",
-      "source_column": "vendor_payouts.amount",
+      "source_column": "transaction.transaction_amount",
       "query_id": "q1",
       "aggregated_row_count": 187,
       "null_excluded_row_count": 0,
@@ -1332,12 +1334,12 @@ and dates will change when the organisers' dataset arrives.
     },
     {
       "id": "c2",
-      "label": "Largest vendor payout total",
+      "label": "Largest single account's debit total",
       "value": "812400.00",
       "unrounded_value": "812400.000000",
       "unit": null,
       "currency": "INR",
-      "source_column": "vendor_payouts.amount",
+      "source_column": "transaction.transaction_amount",
       "query_id": "q1",
       "aggregated_row_count": 14,
       "null_excluded_row_count": 0,
@@ -1346,8 +1348,8 @@ and dates will change when the organisers' dataset arrives.
     }
   ],
   "figure_provenance": [
-    { "computation_record_id": "c1", "source_record_count": 187, "source_record_ids": ["PO-000412", "PO-000413"], "truncated": true },
-    { "computation_record_id": "c2", "source_record_count": 14,  "source_record_ids": ["PO-000418"], "truncated": false }
+    { "computation_record_id": "c1", "source_record_count": 187, "source_record_ids": ["001cb576-eb28-44b1-a219-0f3f27093fad", "014b7179-e696-4837-9b8e-7164d171b760"], "truncated": true },
+    { "computation_record_id": "c2", "source_record_count": 14,  "source_record_ids": ["0266384b-929c-478d-a7da-a54acf984343"], "truncated": false }
   ],
   "anomaly_callouts": [],
   "confidence_score": 0.86,
@@ -1386,8 +1388,8 @@ and dates will change when the organisers' dataset arrives.
   "skip_reason": null,
   "started_at": "2025-07-14T09:12:03.417Z",
   "duration_ms": 12,
-  "input_summary": { "intent": "aggregate_spend_over_period" },
-  "output_summary": { "metric": "vendor_spend_over_period", "score": 0.91 },
+  "input_summary": { "intent": "account_spend" },
+  "output_summary": { "metric": "account_debit_total_over_period", "score": 0.91 },
   "truncated": false,
   "untruncated_row_count": null,
   "untruncated_char_count": null,
@@ -1429,13 +1431,13 @@ and dates will change when the organisers' dataset arrives.
   "started_at": "2025-07-14T09:20:11.882Z",
   "duration_ms": 31,
   "input_summary": { "candidate": 1 },
-  "output_summary": { "verdict": "reject", "category": "unknown_identifier", "name": "vendor_tier" },
+  "output_summary": { "verdict": "reject", "category": "unknown_identifier", "name": "account_tier" },
   "truncated": false,
   "untruncated_row_count": null,
   "untruncated_char_count": null,
   "model_call": null,
   "error_type": "ValidationRejectedError",
-  "error_message": "unknown identifier: vendor_tier"
+  "error_message": "unknown identifier: account_tier"
 }
 ```
 
@@ -1562,8 +1564,8 @@ The keepalive has no `sequence`. Sequence goes 5 → 6. **That is not a gap.**
   "caution": null,
   "abstention_reason_code": null,
   "clarifying_question": {
-    "question": "Which vendor did you mean — Acme Industrial or Acme Logistics?",
-    "options": ["Acme Industrial", "Acme Logistics"],
+    "question": "Which bank did you mean — STATE BANK OF INDIA or AU SMALL FINANCE BANK LIMITED?",
+    "options": ["STATE BANK OF INDIA", "AU SMALL FINANCE BANK LIMITED"],
     "ambiguity": "entity"
   },
   "transcript": null,

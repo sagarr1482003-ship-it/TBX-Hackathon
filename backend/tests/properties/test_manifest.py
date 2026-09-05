@@ -99,7 +99,7 @@ def valid_manifests(draw) -> DatasetManifest:
                 parameters=[MetricParameter(name="p", type="text", required=True)],
                 sql_template="SELECT 1 FROM t WHERE c = :p",
                 expected_columns=["c"],
-                intent_families=["vendor_spend"],
+                intent_families=["account_spend"],
                 routing_keywords=["spend"],
                 golden_question_ids=["g1", "g2", "g3"],
             )
@@ -179,7 +179,7 @@ def test_reject_metric_bind_not_in_parameters() -> None:
             parameters=[MetricParameter(name="p", type="text")],
             sql_template="SELECT 1 WHERE a = :p AND b = :q",  # :q undeclared
             expected_columns=["c"],
-            intent_families=["vendor_spend"],
+            intent_families=["account_spend"],
             routing_keywords=["k"],
             golden_question_ids=["g1", "g2", "g3"],
         )

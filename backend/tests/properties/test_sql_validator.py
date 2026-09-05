@@ -62,7 +62,7 @@ def test_property1_hostile_is_never_accepted(sql: str) -> None:
 # ---------- Property 1, positive side: well-formed SELECTs are accepted ---------------
 @given(sql=well_formed_select())
 def test_property1_well_formed_is_accepted(sql: str) -> None:
-    verdict = _VALIDATOR.validate(sql, _KB, "vendor_spend")
+    verdict = _VALIDATOR.validate(sql, _KB, "account_spend")
     assert isinstance(verdict, AcceptVerdict), (
         f"well-formed SQL was rejected: {sql!r} -> "
         f"{getattr(verdict, 'category', None)}: {getattr(verdict, 'reason', None)}"
@@ -72,7 +72,7 @@ def test_property1_well_formed_is_accepted(sql: str) -> None:
 @given(binding=metric_binding())
 def test_property1_metric_binding_is_accepted(binding: tuple[str, dict]) -> None:
     sql, params = binding
-    verdict = _VALIDATOR.validate(sql, _KB, "payout_listing", params)
+    verdict = _VALIDATOR.validate(sql, _KB, "reference_lookup", params)
     assert isinstance(verdict, AcceptVerdict), (
         f"metric binding rejected: {sql!r} -> {getattr(verdict, 'reason', None)}"
     )
@@ -83,7 +83,7 @@ def test_property1_metric_binding_is_accepted(binding: tuple[str, dict]) -> None
 # ---------- Property 1: accepted canonical SQL carries no forbidden node --------------
 @given(sql=well_formed_select())
 def test_property1_accepted_canonical_has_no_forbidden_node(sql: str) -> None:
-    verdict = _VALIDATOR.validate(sql, _KB, "vendor_spend")
+    verdict = _VALIDATOR.validate(sql, _KB, "account_spend")
     assert isinstance(verdict, AcceptVerdict)
     parsed = sqlglot.parse(verdict.canonical_sql, dialect="postgres")
     assert len(parsed) == 1, "canonical SQL must be exactly one statement"
@@ -96,7 +96,7 @@ def test_property1_accepted_canonical_has_no_forbidden_node(sql: str) -> None:
 # ---------- Property 2: accepted SQL references only the active schema -----------------
 @given(sql=well_formed_select())
 def test_property2_accepted_tables_and_columns_exist(sql: str) -> None:
-    verdict = _VALIDATOR.validate(sql, _KB, "vendor_spend")
+    verdict = _VALIDATOR.validate(sql, _KB, "account_spend")
     assert isinstance(verdict, AcceptVerdict)
     for table in verdict.referenced_tables:
         assert _KB.has_table(table), f"accepted SQL references unknown table {table!r}"
@@ -110,7 +110,7 @@ def test_property2_accepted_tables_and_columns_exist(sql: str) -> None:
 @given(binding=metric_binding())
 def test_property2_metric_binding_references_exist(binding: tuple[str, dict]) -> None:
     sql, params = binding
-    verdict = _VALIDATOR.validate(sql, _KB, "payout_listing", params)
+    verdict = _VALIDATOR.validate(sql, _KB, "reference_lookup", params)
     assert isinstance(verdict, AcceptVerdict)
     for table in verdict.referenced_tables:
         assert _KB.has_table(table)
@@ -140,6 +140,6 @@ def test_default_row_limit_injected_for_listing() -> None:
 
 
 def test_no_default_limit_for_aggregate_intent() -> None:
-    verdict = _VALIDATOR.validate("SELECT SUM(amount) AS s FROM payouts", _KB, "vendor_spend")
+    verdict = _VALIDATOR.validate("SELECT SUM(amount) AS s FROM payouts", _KB, "account_spend")
     assert isinstance(verdict, AcceptVerdict)
     assert verdict.applied_row_limit is None

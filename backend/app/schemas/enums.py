@@ -4,14 +4,15 @@ from __future__ import annotations
 
 from typing import Literal
 
-# The ten supported intent families (Requirement 1.2).
+# The ten supported intent families (Requirement 1.2), scoped to the organiser
+# bank/account/transaction schema (no vendor, payout or reconciliation tables exist).
 IntentFamily = Literal[
-    "vendor_spend",
-    "category_spend",
+    "bank_summary",
+    "account_balance",
     "account_spend",
     "transaction_lookup",
-    "payout_listing",
-    "reconciliation_status",
+    "reference_lookup",
+    "credit_summary",
     "period_comparison",
     "metric_definition",
     "analytics_question",

@@ -76,14 +76,14 @@ composer, groundedness checker, export, anomaly and insights surfaces all read.
     - _Properties: P11_
 
   - [x] 2.2 Implement the Seed_Data_Generator and the seed manifest
-    - Create `scripts/seed_data.py`, `datasets/seed/manifest.yaml` and `datasets/seed/data_dictionary.csv`, emitting CSVs for vendors, accounts, transactions, vendor_payouts and reconciliation into `datasets/seed/`
-    - Produce every threshold of Requirement 8.2 (≥5000 transactions, ≥200 payouts, ≥40 vendors, ≥12 consecutive months, ≥500 unreconciled, ≥20 in each other allowed status, ≥3 payouts the anomaly rule flags) **and** every edge row of Requirement 8.7 (≥50 transactions with a null in a non-key column, ≥5 vendors under ≥2 name spellings, ≥20 amounts of exactly 0, ≥20 amounts below 0) — the abstention, clarification and anomaly properties all depend on these rows existing
+    - Create `scripts/seed_data.py`, `datasets/seed/manifest.yaml` and `datasets/seed/data_dictionary.csv`, emitting CSVs for the organiser bank/account/transaction schema (`bank.csv`, `account.csv`, `transaction.csv`) into `datasets/seed/`
+    - Produce every threshold of Requirement 8.2 (≥5000 transactions, ≥40 accounts, 10 banks, ≥12 consecutive months, a mix of credit/debit types, ≥3 transactions the anomaly rule flags) **and** every edge row of Requirement 8.7 (≥50 transactions with a null in a non-key column, ≥20 amounts of exactly 0, ≥20 amounts below 0) — the abstention, clarification and anomaly properties all depend on these rows existing
     - Guarantee byte-identical output for a given random seed
     - _Requirements: 8.1, 8.2, 8.3, 8.7_
     - _Properties: P12_
 
   - [x] 2.3 Publish the dataset contract and implement its checker
-    - Create `docs/dataset_contract.md` declaring per entity the required columns, types, units, allowed reconciliation status values, the referential relationships the `Metric_Layer` depends on, the inclusive coverage window, and a severity of `blocking` or `tolerable` for every rule — with null-in-non-key-column, duplicate vendor spelling, amount exactly 0 and amount below 0 all `tolerable`
+    - Create `docs/dataset_contract.md` declaring per entity the required columns, types, units, allowed `transaction_type` values, the referential relationships the `Metric_Layer` depends on, the inclusive coverage window, and a severity of `blocking` or `tolerable` for every rule — with null-in-non-key-column, amount exactly 0 and amount below 0 all `tolerable`
     - Create `app/services/ingestion/contract.py` validating a candidate dataset against every rule before any row loads, aborting on ≥1 blocking deviation with the count and violated rules, and recording tolerable deviations in the ingestion report
     - _Requirements: 8.4, 8.5, 8.8, 8.9, 8.10_
 
@@ -299,7 +299,7 @@ composer, groundedness checker, export, anomaly and insights surfaces all read.
   - [ ] 9.1 Implement the Metric_Layer with the two demo templates
     - **Framing:** this is the accuracy-and-efficiency path and the offline fallback, not the demo default. Requirement 4 mandates it across 14 acceptance criteria and it protects the 30% accuracy weight; its 3-call / ≈3.6k-token budget against the generated-SQL path's 4-call / ≈7.4k (design §4.5) is the model-efficiency story that is 20% of the score. Demonstrate it as the "same question, deterministic path, fewer tokens" comparison against the task 7.11 answer, and as the path that still answers when no provider is reachable
     - Create `app/services/pipeline/metric_layer.py`: deterministic routing score over `routing_keywords` and intent families, `template_match_threshold` selection with every other above-threshold metric recorded, `template_tie_margin` routing to clarification with tied names and descriptions, parameterised binding with no string concatenation, missing-parameter and type/bounds non-conformance routing to clarification before any statement reaches the executor, submission of every bound statement to the `SQL_Validator`, and abstention with `metric_execution_failed` rather than falling back to generated SQL
-    - Add `vendor_spend_over_period` and `unreconciled_transaction_listing` to `datasets/seed/manifest.yaml` with their `ops.metric_definitions` projection and activation gating
+    - Add `account_debit_total_over_period` and `transaction_lookup_by_reference` to `datasets/seed/manifest.yaml` with their `ops.metric_definitions` projection and activation gating
     - Activate the orchestrator's metric branch left inert by 7.11, including the four `skipped` trace events with their reason codes, and record the measured token and call counts of both paths for the same question
     - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.9, 4.10, 4.11, 4.13, 4.14_
 
@@ -326,8 +326,8 @@ composer, groundedness checker, export, anomaly and insights surfaces all read.
   **Tier: required.** Design: Testing strategy (golden set format and runner), Model selection plan.
 
   - [ ] 11.1 Write the golden question set
-    - Create `app/schemas/golden.py` (`GoldenEntry` per design §4.3) and `golden/questions.yaml` with at least 60 entries in that format against the seed dataset, covering vendor spend, category spend, account spend, transaction lookup, payout listing, reconciliation status and period comparison, plus multi-turn follow-ups declaring `context_turns`
-    - Include at least 5 entries of class `abstain` — of which at least 2 request a range entirely outside the seed coverage window with `expected_reason_code: period_outside_coverage` — and at least 3 of class `clarify`, of which at least 1 names a vendor spelling the seed dataset resolves to two or more vendor records; declare expected columns, row-order significance and the tagged metric where applicable, and at least 3 tagged entries per metric definition
+    - Create `app/schemas/golden.py` (`GoldenEntry` per design §4.3) and `golden/questions.yaml` with at least 60 entries in that format against the seed dataset, covering bank summary, account balance, account spend, transaction lookup, reference lookup, credit summary and period comparison, plus multi-turn follow-ups declaring `context_turns`
+    - Include at least 5 entries of class `abstain` — of which at least 2 request a range entirely outside the seed coverage window with `expected_reason_code: period_outside_coverage` — and at least 3 of class `clarify`, of which at least 1 names a bank spelling/abbreviation the seed dataset resolves to two or more bank records; declare expected columns, row-order significance and the tagged metric where applicable, and at least 3 tagged entries per metric definition
     - _Requirements: 26.1, 26.2, 8.6, 4.7_
 
   - [ ] 11.2 Implement the Evaluation_Harness and its comparator
@@ -362,7 +362,7 @@ composer, groundedness checker, export, anomaly and insights surfaces all read.
   **Tier: optional.** Design: §4.4 (metrics surface and dashboard contract), §5.3 indexes.
 
   - [ ] 13.1 Complete the Metric_Layer catalogue
-    - Extend `datasets/seed/manifest.yaml` and `golden/questions.yaml` with spend by category, spend by account, reconciliation summary by status, vendor payout listing and period-over-period comparison for each preceding metric, each with ≥3 tagged golden questions and activation gated on per-question accuracy
+    - Extend `datasets/seed/manifest.yaml` and `golden/questions.yaml` with spend by account, balance by bank, credit summary by transaction type, reference/UTR lookup and period-over-period comparison for each preceding metric, each with ≥3 tagged golden questions and activation gated on per-question accuracy
     - Note: Requirement 4.8's minimum catalogue coverage is unmet until this task completes; until then those question families take the generated-SQL path
     - _Requirements: 4.7, 4.8, 4.11_
 

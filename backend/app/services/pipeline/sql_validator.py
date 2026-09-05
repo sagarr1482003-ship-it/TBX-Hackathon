@@ -29,7 +29,7 @@ from app.services.knowledge.schema_lookup import SchemaLookup
 
 # Intent families that are record listings; a missing row limit gets the default injected.
 LISTING_FAMILIES: frozenset[str] = frozenset(
-    {"transaction_lookup", "payout_listing", "reconciliation_status"}
+    {"transaction_lookup", "reference_lookup"}
 )
 
 # Statement-level constructs that are always forbidden (DDL/DML/TCL/privilege/session).
