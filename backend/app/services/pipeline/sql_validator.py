@@ -27,7 +27,10 @@ from app.schemas.enums import IntentFamily
 from app.schemas.validation import AcceptVerdict, RejectVerdict, Verdict
 from app.services.knowledge.schema_lookup import SchemaLookup
 
-# Intent families that are record listings; a missing row limit gets the default injected.
+# Intent families that were treated as record listings when a default LIMIT was auto-injected.
+# NOTE: default-LIMIT injection has been removed (queries return their full result set, bounded
+# downstream by the execution row cap), so this set and ``_is_row_listing`` below are no longer
+# wired into validation. Kept for reference / possible re-enablement.
 LISTING_FAMILIES: frozenset[str] = frozenset(
     {"transaction_lookup", "reference_lookup"}
 )
@@ -319,7 +322,10 @@ class SqlValidator:
             return ref
         referenced_tables, referenced_columns = ref
 
-        # Row-limit ceiling and default-limit injection.
+        # Row-limit ceiling. A user/generator-declared LIMIT above the max is rejected; but we no
+        # longer inject a default LIMIT when none is declared — listing queries return their full
+        # result set (bounded downstream by the execution row cap / preview fetch), rather than
+        # being silently capped to a substituted default.
         limit = _declared_limit(root)
         if limit is not None and limit > self.settings.max_declared_row_limit:
             return RejectVerdict(
@@ -328,9 +334,6 @@ class SqlValidator:
                 category="row_limit_too_large",
             )
         applied_row_limit = limit
-        if limit is None and intent_family in LISTING_FAMILIES and _is_row_listing(root):
-            root = root.limit(self.settings.default_row_limit)
-            applied_row_limit = self.settings.default_row_limit
 
         elapsed_ms = (time.monotonic() - t0) * 1000.0
         if elapsed_ms > 100.0:

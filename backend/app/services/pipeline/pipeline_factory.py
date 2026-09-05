@@ -7,6 +7,8 @@ Returns (pipeline, pool); the caller closes the pool.
 
 from __future__ import annotations
 
+import logging
+
 from app.config import get_settings
 from app.services.ingestion.contract import SEED_CONTRACTS
 from app.services.model.answer_composer import _SYSTEM as COMPOSER_SYSTEM
@@ -18,6 +20,29 @@ from app.services.model.sql_generator import _SYSTEM as GENERATOR_SYSTEM
 from app.services.model.sql_generator import SqlGenerator
 from app.services.pipeline.masking import sensitive_columns
 from app.services.pipeline.simple_pipeline import SimplePipeline
+
+logger = logging.getLogger(__name__)
+
+
+def _decrypt_encrypted(rows, cipher) -> None:
+    """Decrypt any encrypted cells in place, warning once if the configured key can't decrypt them.
+
+    Marker-driven: only values carrying the ``enc:v1:`` prefix (i.e. produced by this app's cipher)
+    are decrypted, so it works no matter which columns the connected database encrypted. A non-zero
+    failure count almost always means the connected database was encrypted with a different AES key
+    than the one configured (the judges' connect-your-own-DB path). We keep the query alive and let
+    the masking layer hide the undecryptable cells rather than failing the turn.
+    """
+    from app.services.pipeline.pii_crypto import decrypt_encrypted_inplace
+
+    failures = decrypt_encrypted_inplace(rows, cipher)
+    if failures:
+        logger.warning(
+            "PII decrypt: %d encrypted cell(s) could not be decrypted with the configured "
+            "PII_ENCRYPTION_KEY — likely a key mismatch for the connected database. "
+            "Those values are shown redacted.",
+            failures,
+        )
 
 
 def make_executor(reader_dsn: str, cipher=None, sensitive=frozenset(), preview_cap: int = 100):
@@ -45,11 +70,8 @@ def make_executor(reader_dsn: str, cipher=None, sensitive=frozenset(), preview_c
                 total = int(cur.fetchone()[0])
             except Exception:
                 total = len(rows)
-        if cipher is not None and sensitive:
-            for row in rows:
-                for col in sensitive:
-                    if col in row and isinstance(row[col], str):
-                        row[col] = cipher.decrypt(row[col])
+        if cipher is not None:
+            _decrypt_encrypted(rows, cipher)
         return columns, rows, total
 
     def explain_cost(sql: str) -> float:

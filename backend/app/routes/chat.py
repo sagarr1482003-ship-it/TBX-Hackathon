@@ -43,13 +43,30 @@ async def chat_stream(body: ChatRequest):
     """Stream the pipeline's trace stages as SSE, with optional session follow-up context."""
     sessions = get_session_manager()
     # Session is backend-generated: the FE calls POST /api/chat/session when a new chat window
-    # opens and sends that session_id with each question. An unknown/expired id yields no history
-    # (treated as a fresh conversation).
+    # opens and sends that session_id with each question. The in-memory store is lost on restart
+    # and expires after an idle TTL, but the FE persists its session_id — so an id we no longer
+    # recognise is *adopted* rather than dropped, letting the conversation resume accumulating
+    # follow-up memory instead of silently losing it every turn.
+    known = bool(body.session_id) and sessions.exists(body.session_id)
     history = sessions.history(body.session_id) if body.session_id else []
+    if body.session_id and not known:
+        sessions.adopt(body.session_id)
     pipeline, pool = build_pipeline()
 
     async def event_generator():
         final: dict | None = None
+        # Tell the FE which session this turn is bound to and whether prior memory was found.
+        if body.session_id:
+            yield {
+                "event": "session",
+                "data": json.dumps(
+                    {
+                        "session_id": body.session_id,
+                        "recognized": known,
+                        "history_turns": len(history),
+                    }
+                ),
+            }
         try:
             async for evt in pipeline.run_stream(body.q, history=history):
                 if evt["event"] == "completion":

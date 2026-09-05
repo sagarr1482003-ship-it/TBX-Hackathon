@@ -114,3 +114,58 @@ def test_row_encrypt_decrypt_only_touches_sensitive() -> None:
     restored = decrypt_row(stored, sensitive, c)
     assert restored["account_number"] == "50200013729069"
     assert restored["utr_number"] == "jhI5nAdyb1qOEjmcB3JvWjC6tTO"
+
+
+
+# --- marker-driven, graceful decrypt-on-read (connect-your-own-DB path) -------------------
+# The read path decrypts anything carrying the enc:v1: marker regardless of column, and never
+# aborts a query: plaintext passes through, a wrong-key cell becomes UNDECRYPTABLE.
+from app.services.pipeline.pii_crypto import (  # noqa: E402
+    UNDECRYPTABLE,
+    decrypt_encrypted_inplace,
+    is_encrypted,
+)
+
+
+def test_is_encrypted_marker() -> None:
+    c = _cipher()
+    assert is_encrypted(c.encrypt("50200013729069")) is True
+    assert is_encrypted("50200013729069") is False  # plaintext
+    assert is_encrypted(None) is False
+    assert is_encrypted(12345) is False  # non-string
+
+
+def test_decrypt_encrypted_inplace_decrypts_only_marked_cells() -> None:
+    c = _cipher()
+    rows = [
+        {
+            "account_id": "a1",  # plaintext id — must stay untouched
+            "account_number": c.encrypt("50200013729069"),  # encrypted
+            "available_balance": "1000.00",  # plaintext non-sensitive
+        }
+    ]
+    failures = decrypt_encrypted_inplace(rows, c)
+    assert failures == 0
+    assert rows[0]["account_id"] == "a1"
+    assert rows[0]["account_number"] == "50200013729069"
+    assert rows[0]["available_balance"] == "1000.00"
+
+
+def test_decrypt_encrypted_inplace_is_column_agnostic() -> None:
+    # A column the contract does not mark sensitive is still decrypted if it carries the marker,
+    # because judges may encrypt arbitrary columns in their own database.
+    c = _cipher()
+    rows = [{"some_other_col": c.encrypt("secret-value")}]
+    assert decrypt_encrypted_inplace(rows, c) == 0
+    assert rows[0]["some_other_col"] == "secret-value"
+
+
+def test_decrypt_encrypted_inplace_wrong_key_degrades_without_raising() -> None:
+    # Data encrypted with a different key than the one configured must NOT crash the turn.
+    written = PiiCipher(generate_key()).encrypt("50200013729069")
+    reader = PiiCipher(generate_key())  # judges' own (mismatched) key
+    rows = [{"account_number": written, "account_id": "a1"}]
+    failures = decrypt_encrypted_inplace(rows, reader)
+    assert failures == 1
+    assert rows[0]["account_number"] == UNDECRYPTABLE
+    assert rows[0]["account_id"] == "a1"  # untouched

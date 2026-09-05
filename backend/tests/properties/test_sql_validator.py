@@ -132,11 +132,13 @@ def test_guardrail_rejections_flag_violation() -> None:
         assert verdict.guardrail_violation, f"expected guardrail flag for {sql!r}"
 
 
-def test_default_row_limit_injected_for_listing() -> None:
+def test_no_default_row_limit_injected_for_listing() -> None:
+    # Default-LIMIT substitution was removed: a listing with no declared LIMIT now returns its
+    # full result set (bounded downstream by the execution row cap), not a capped default.
     verdict = _VALIDATOR.validate("SELECT id FROM transactions", _KB, "transaction_lookup")
     assert isinstance(verdict, AcceptVerdict)
-    assert verdict.applied_row_limit == 1000
-    assert "1000" in verdict.canonical_sql
+    assert verdict.applied_row_limit is None
+    assert "LIMIT" not in verdict.canonical_sql.upper()
 
 
 def test_no_default_limit_for_aggregate_intent() -> None:

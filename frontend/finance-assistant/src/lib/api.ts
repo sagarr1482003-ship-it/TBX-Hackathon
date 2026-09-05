@@ -153,6 +153,106 @@ export function submitTurnStreaming(
   )
 }
 
+// ---------------------------------------------------------------------------
+// Voice transcription (speech-to-text)
+// ---------------------------------------------------------------------------
+
+/**
+ * Upload recorded audio and get back the transcript.
+ *
+ * Hits `POST /api/voice/stream` (multipart), which transcribes with Sarvam STT
+ * and then streams the pipeline as SSE. We only need the leading `transcript`
+ * frame — as soon as we read it we abort the request, because the transcript is
+ * re-submitted through the normal chat flow (so the evidence panel, session
+ * memory, etc. behave exactly like a typed question).
+ *
+ * Returns the recognised text (and optional confidence / language).
+ */
+export async function transcribeAudio(
+  audio: Blob,
+  options?: { languageCode?: string; filename?: string },
+): Promise<{ text: string; confidence?: number; language_code?: string }> {
+  if (USE_MOCK) {
+    // No backend in mock mode — return a canned transcript after a short delay
+    // so the recording UI can still be exercised end-to-end.
+    await new Promise((r) => setTimeout(r, 600))
+    return {
+      text: 'What did we spend on vendor payouts last month?',
+      confidence: 0.95,
+      language_code: 'en-IN',
+    }
+  }
+
+  const form = new FormData()
+  const filename = options?.filename ?? 'recording.webm'
+  form.append('file', audio, filename)
+  if (options?.languageCode) form.append('language_code', options.languageCode)
+
+  const controller = new AbortController()
+  const res = await fetch(`${SSE_BASE}/api/voice/stream`, {
+    method: 'POST',
+    headers: AUTH_TOKEN ? { 'X-Internal-Token': AUTH_TOKEN } : undefined,
+    body: form,
+    signal: controller.signal,
+  })
+
+  if (!res.ok || !res.body) {
+    const body = res.ok ? '' : await res.text().catch(() => '')
+    throw new ApiError(res.status || 500, body, '/api/voice/stream')
+  }
+
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      buffer = buffer.replace(/\r\n/g, '\n')
+
+      const frames = buffer.split('\n\n')
+      buffer = frames.pop() ?? ''
+      for (const raw of frames) {
+        if (!raw.trim()) continue
+        const frame = parseTranscriptFrame(raw)
+        if (frame) {
+          // Got what we need — stop reading the rest of the pipeline stream.
+          controller.abort()
+          return frame
+        }
+      }
+    }
+    throw new Error('No transcript returned from the voice endpoint')
+  } finally {
+    controller.abort()
+  }
+}
+
+/** Pull a `transcript` SSE frame out of a raw block of lines, or null. */
+function parseTranscriptFrame(
+  raw: string,
+): { text: string; confidence?: number; language_code?: string } | null {
+  let event = 'message'
+  const dataLines: string[] = []
+  for (const line of raw.split('\n')) {
+    if (line.startsWith(':')) continue
+    const colon = line.indexOf(':')
+    const field = colon === -1 ? line : line.slice(0, colon)
+    let value = colon === -1 ? '' : line.slice(colon + 1)
+    if (value.startsWith(' ')) value = value.slice(1)
+    if (field === 'event') event = value
+    else if (field === 'data') dataLines.push(value)
+  }
+  if (event !== 'transcript' || !dataLines.length) return null
+  try {
+    return JSON.parse(dataLines.join('\n'))
+  } catch {
+    return null
+  }
+}
+
 export async function getTurn(turnId: string): Promise<TurnResponse> {
   if (USE_MOCK) return mock.getAnsweredTurn()
   return apiFetch<TurnResponse>(`/api/turns/${turnId}`)

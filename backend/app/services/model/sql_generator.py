@@ -147,16 +147,35 @@ class SqlGenerator:
 
     @staticmethod
     def _with_history(question: str, history: list | None) -> str:
-        """Prepend recent (question -> SQL) turns so a follow-up resolves against prior context.
+        """Prepend recent turns so a follow-up resolves against prior context.
 
-        ``history`` is a list of objects with ``.question`` and ``.resolved_sql`` (Turn). Only the
-        last few are included; a follow-up like "what about credits?" then edits the prior SQL.
+        ``history`` is a list of Turn-like objects with ``.question``, ``.resolved_sql`` and
+        ``.answer``. We include the last few turns and, for each, the prior SQL *and* the prior
+        answer text. Carrying the answer matters when the user established an identifier in plain
+        language earlier (e.g. "my account id: e89f…" -> a balance answer naming that account):
+        a later "what are my transactions" must bind "my" to that same account rather than
+        re-asking. Only the last few turns are included to keep the prompt bounded.
         """
         if not history:
             return f"Question: {question}\nSQL:"
-        lines = ["Conversation so far (resolve follow-ups against the previous SQL):"]
+        lines = [
+            "Conversation so far. Resolve follow-ups (pronouns like \"my\"/\"that\" and phrases "
+            "like \"my account\") against the identifiers and SQL already established below; do "
+            "not ask again for something the user already provided.",
+        ]
         for t in history[-3:]:
-            if getattr(t, "resolved_sql", None):
-                lines.append(f"- Q: {t.question}\n  SQL: {t.resolved_sql}")
+            q = getattr(t, "question", None)
+            sql = getattr(t, "resolved_sql", None)
+            answer = getattr(t, "answer", None)
+            if not q:
+                continue
+            block = [f"- Q: {q}"]
+            if sql:
+                block.append(f"  SQL: {sql}")
+            if answer:
+                # A one-line snippet of the prior answer carries resolved identifiers/facts.
+                snippet = " ".join(str(answer).split())[:240]
+                block.append(f"  A: {snippet}")
+            lines.append("\n".join(block))
         lines.append(f"\nQuestion: {question}\nSQL:")
         return "\n".join(lines)

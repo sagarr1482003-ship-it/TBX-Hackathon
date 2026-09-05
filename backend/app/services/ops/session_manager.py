@@ -51,6 +51,24 @@ class InMemorySessionManager:
             self._sessions[sid] = Session(session_id=sid, created_at=now, last_seen=now)
         return sid
 
+    def adopt(self, session_id: str) -> None:
+        """Register a client-supplied ``session_id`` we don't know yet.
+
+        The in-memory store is lost on backend restart and entries expire after the idle TTL, but
+        the frontend persists its ``session_id`` in localStorage. Without this, a persisted id would
+        be silently treated as a brand-new conversation on every question after a restart/expiry —
+        losing follow-up memory. Adopting the id lets the *rest of this conversation* accumulate and
+        reuse memory again, so the session self-heals rather than staying permanently broken.
+        """
+        if not session_id:
+            return
+        now = time.time()
+        with self._lock:
+            if session_id not in self._sessions:
+                self._sessions[session_id] = Session(
+                    session_id=session_id, created_at=now, last_seen=now
+                )
+
     def _expired(self, s: Session, now: float) -> bool:
         return (now - s.last_seen) > self._ttl
 
