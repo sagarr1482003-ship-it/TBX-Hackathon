@@ -1,16 +1,17 @@
 entity,column,description
-transactions,transaction_id,Unique transaction identifier.
-transactions,transaction_date,Date the transaction was recorded.
-transactions,amount,Transaction amount in the dataset currency.
-transactions,vendor_id,Vendor the transaction was paid to.
-transactions,account_code,Chart-of-accounts code the transaction posts to.
-transactions,category,Spend category of the transaction.
-transactions,reconciliation_status,Reconciliation state of the transaction.
-vendor_payouts,payout_id,Unique payout identifier.
-vendor_payouts,amount,Payout amount in the dataset currency.
-vendor_payouts,vendor_id,Vendor the payout was made to.
-vendors,vendor_id,Unique vendor identifier.
-vendors,vendor_name,Vendor display name.
-accounts,account_code,Unique chart-of-accounts code.
-reconciliation,reconciliation_id,Unique reconciliation record identifier.
-reconciliation,status,Reconciliation outcome status.
+bank,bank_code,"IFSC-prefix bank code, primary key."
+bank,bank_name,Canonical all-caps bank name.
+account,account_id,Unique account identifier.
+account,entity_id,Customer/entity that owns the account.
+account,account_number,Account number (sensitive; masked in answers).
+account,program_id,Product/program the account belongs to.
+account,available_balance,Current available balance in the account.
+account,bank_code,Bank the account belongs to.
+transaction,transaction_id,Unique transaction identifier.
+transaction,account_id,Account the transaction belongs to.
+transaction,transaction_date,Timestamp of the transaction.
+transaction,transaction_type,Either credit or debit.
+transaction,description,Free-text transaction narration.
+transaction,transaction_amount,Transaction amount.
+transaction,transaction_reference_id,Plaintext reference/receipt number.
+transaction,utr_number,Unique transaction reference (sensitive; masked).

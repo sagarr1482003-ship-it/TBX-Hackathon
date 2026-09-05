@@ -23,9 +23,7 @@ from typing import Any, Literal
 
 Severity = Literal["blocking", "tolerable"]
 
-ALLOWED_RECON_STATUSES: frozenset[str] = frozenset(
-    {"unreconciled", "reconciled", "pending", "disputed"}
-)
+ALLOWED_TRANSACTION_TYPES: frozenset[str] = frozenset({"credit", "debit"})
 
 
 @dataclass(frozen=True)
@@ -34,6 +32,7 @@ class ColumnRule:
     required: bool = False
     is_key: bool = False
     is_monetary: bool = False
+    sensitive: bool = False  # must be masked, never shown raw in answers
 
 
 @dataclass(frozen=True)
@@ -51,7 +50,9 @@ class EntityContract:
     primary_key: str
     columns: tuple[ColumnRule, ...]
     foreign_keys: tuple[ForeignKey, ...] = ()
-    status_column: str | None = None  # column constrained to ALLOWED_RECON_STATUSES
+    # A column constrained to a fixed set of values; an out-of-set value is blocking.
+    enum_column: str | None = None
+    enum_values: frozenset[str] = frozenset()
     vendor_name_column: str | None = None  # column checked for duplicate spellings
 
 
@@ -191,14 +192,14 @@ def validate_entity(
                             )
                         )
 
-        # Reconciliation status value must be in the allowed set -> unknown is blocking.
-        if contract.status_column is not None:
-            sval = row.get(contract.status_column)
-            if not _is_blank(sval) and str(sval) not in ALLOWED_RECON_STATUSES:
+        # An enum-constrained column value must be in the allowed set -> unknown is blocking.
+        if contract.enum_column is not None:
+            sval = row.get(contract.enum_column)
+            if not _is_blank(sval) and str(sval) not in contract.enum_values:
                 deviations.append(
                     Deviation(
                         contract.name,
-                        "unknown reconciliation status value",
+                        f"unknown {contract.enum_column} value",
                         "blocking",
                         f"row {i}: {sval}",
                     )
@@ -267,74 +268,46 @@ def validate_dataset(
     return report
 
 
-# The seed dataset's contract, matching docs/dataset_contract.md.
+# The seed dataset's contract, matching docs/dataset_contract.md (organiser schema).
 SEED_CONTRACTS: list[EntityContract] = [
     EntityContract(
-        name="vendors",
-        primary_key="vendor_id",
+        name="bank",
+        primary_key="bank_code",
         columns=(
-            ColumnRule("vendor_id", required=True, is_key=True),
-            ColumnRule("vendor_name", required=True),
-            ColumnRule("vendor_category"),
-        ),
-        vendor_name_column="vendor_name",
-    ),
-    EntityContract(
-        name="accounts",
-        primary_key="account_code",
-        columns=(
-            ColumnRule("account_code", required=True, is_key=True),
-            ColumnRule("account_name", required=True),
-            ColumnRule("account_type"),
+            ColumnRule("bank_code", required=True, is_key=True),
+            ColumnRule("bank_name", required=True),
         ),
     ),
     EntityContract(
-        name="transactions",
+        name="account",
+        primary_key="account_id",
+        columns=(
+            ColumnRule("account_id", required=True, is_key=True),
+            ColumnRule("entity_id", required=True),
+            ColumnRule("account_number", required=True, sensitive=True),
+            ColumnRule("program_id", required=True),
+            ColumnRule("available_balance", required=True, is_monetary=True),
+            ColumnRule("bank_code", required=True),
+        ),
+        foreign_keys=(ForeignKey("bank_code", "bank", "bank_code", null_tolerable=False),),
+    ),
+    EntityContract(
+        name="transaction",
         primary_key="transaction_id",
         columns=(
             ColumnRule("transaction_id", required=True, is_key=True),
+            ColumnRule("account_id", required=True),
             ColumnRule("transaction_date", required=True),
-            ColumnRule("amount", required=True, is_monetary=True),
-            ColumnRule("currency", required=True),
-            ColumnRule("vendor_id"),
-            ColumnRule("account_code"),
-            ColumnRule("category"),
+            ColumnRule("transaction_type", required=True),
             ColumnRule("description"),
-            ColumnRule("reconciliation_status"),
+            ColumnRule("transaction_amount", required=True, is_monetary=True),
+            ColumnRule("transaction_reference_id"),
+            ColumnRule("utr_number", sensitive=True),
         ),
         foreign_keys=(
-            ForeignKey("vendor_id", "vendors", "vendor_id", null_tolerable=True),
-            ForeignKey("account_code", "accounts", "account_code", null_tolerable=True),
+            ForeignKey("account_id", "account", "account_id", null_tolerable=False),
         ),
-        status_column="reconciliation_status",
-    ),
-    EntityContract(
-        name="vendor_payouts",
-        primary_key="payout_id",
-        columns=(
-            ColumnRule("payout_id", required=True, is_key=True),
-            ColumnRule("payout_date", required=True),
-            ColumnRule("amount", required=True, is_monetary=True),
-            ColumnRule("currency", required=True),
-            ColumnRule("vendor_id", required=True),
-            ColumnRule("payout_status"),
-            ColumnRule("reference"),
-        ),
-        foreign_keys=(ForeignKey("vendor_id", "vendors", "vendor_id", null_tolerable=False),),
-    ),
-    EntityContract(
-        name="reconciliation",
-        primary_key="reconciliation_id",
-        columns=(
-            ColumnRule("reconciliation_id", required=True, is_key=True),
-            ColumnRule("transaction_id", required=True),
-            ColumnRule("status", required=True),
-            ColumnRule("matched_at"),
-            ColumnRule("note"),
-        ),
-        foreign_keys=(
-            ForeignKey("transaction_id", "transactions", "transaction_id", null_tolerable=False),
-        ),
-        status_column="status",
+        enum_column="transaction_type",
+        enum_values=ALLOWED_TRANSACTION_TYPES,
     ),
 ]

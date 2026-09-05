@@ -53,56 +53,39 @@ def upgrade() -> None:
     # --- finance schema (design §5.2) ---------------------------------------------------
     op.execute(
         """
-        CREATE TABLE finance.vendors (
-            vendor_id        text PRIMARY KEY,
-            vendor_name      text NOT NULL,
-            vendor_category  text,
+        CREATE TABLE finance.bank (
+            bank_code        text PRIMARY KEY,
+            bank_name        text NOT NULL,
             dataset_version  int  NOT NULL
         );
-        CREATE TABLE finance.accounts (
-            account_code     text PRIMARY KEY,
-            account_name     text NOT NULL,
-            account_type     text,
-            dataset_version  int  NOT NULL
+        CREATE TABLE finance.account (
+            account_id         text PRIMARY KEY,
+            entity_id          text          NOT NULL,
+            account_number     text          NOT NULL,   -- sensitive; masked in answers
+            program_id         int           NOT NULL,
+            available_balance  numeric(15,2) NOT NULL DEFAULT 0.00,
+            bank_code          text          NOT NULL REFERENCES finance.bank(bank_code),
+            dataset_version    int           NOT NULL
         );
-        CREATE TABLE finance.transactions (
-            transaction_id        text PRIMARY KEY,
-            transaction_date      date          NOT NULL,
-            amount                numeric(18,2) NOT NULL,
-            currency              char(3)       NOT NULL,
-            vendor_id             text REFERENCES finance.vendors(vendor_id),
-            account_code          text REFERENCES finance.accounts(account_code),
-            category              text,
-            description           text,
-            reconciliation_status text,
-            dataset_version       int NOT NULL
+        CREATE TABLE finance.transaction (
+            transaction_id           text PRIMARY KEY,
+            account_id               text          NOT NULL REFERENCES finance.account(account_id),
+            transaction_date         timestamptz   NOT NULL,
+            transaction_type         text          NOT NULL
+                                     CHECK (transaction_type IN ('credit','debit')),
+            description              text,
+            transaction_amount       numeric(15,2) NOT NULL DEFAULT 0.00,
+            transaction_reference_id text,          -- plaintext, searchable
+            utr_number               text,          -- sensitive; masked in answers
+            dataset_version          int           NOT NULL
         );
-        CREATE TABLE finance.vendor_payouts (
-            payout_id        text PRIMARY KEY,
-            payout_date      date          NOT NULL,
-            amount           numeric(18,2) NOT NULL,
-            currency         char(3)       NOT NULL,
-            vendor_id        text NOT NULL REFERENCES finance.vendors(vendor_id),
-            payout_status    text,
-            reference        text,
-            dataset_version  int NOT NULL
-        );
-        CREATE TABLE finance.reconciliation (
-            reconciliation_id  text PRIMARY KEY,
-            transaction_id     text NOT NULL REFERENCES finance.transactions(transaction_id),
-            status             text NOT NULL,
-            matched_at         timestamptz,
-            note               text,
-            dataset_version    int NOT NULL
-        );
-        CREATE INDEX ix_txn_date      ON finance.transactions (transaction_date);
-        CREATE INDEX ix_txn_vendor    ON finance.transactions (vendor_id);
-        CREATE INDEX ix_txn_status    ON finance.transactions (reconciliation_status);
-        CREATE INDEX ix_txn_account   ON finance.transactions (account_code);
-        CREATE INDEX ix_txn_category  ON finance.transactions (category);
-        CREATE INDEX ix_payout_date   ON finance.vendor_payouts (payout_date);
-        CREATE INDEX ix_payout_vendor ON finance.vendor_payouts (vendor_id);
-        CREATE INDEX ix_vendor_name_lower ON finance.vendors (lower(vendor_name));
+        CREATE INDEX ix_txn_date    ON finance.transaction (transaction_date);
+        CREATE INDEX ix_txn_account ON finance.transaction (account_id);
+        CREATE INDEX ix_txn_type    ON finance.transaction (transaction_type);
+        CREATE INDEX ix_txn_ref     ON finance.transaction (transaction_reference_id);
+        CREATE INDEX ix_account_bank ON finance.account (bank_code);
+        CREATE INDEX ix_account_entity ON finance.account (entity_id);
+        CREATE INDEX ix_bank_name_lower ON finance.bank (lower(bank_name));
         """
     )
 

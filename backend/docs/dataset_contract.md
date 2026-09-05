@@ -1,107 +1,69 @@
 # Dataset Contract
 
 This is the interface both the synthetic seed dataset and the organisers' delivered dataset must
-satisfy. It declares, per entity, the required columns and their types and units, the allowed
-reconciliation status values, the referential relationships the Metric_Layer depends on, the
-coverage window, and — for every rule — a severity of **blocking** or **tolerable**
-(Requirement 8.4).
+satisfy. It declares, per entity, the required columns and their types, the allowed
+`transaction_type` values, the referential relationships, and — for every rule — a severity of
+**blocking** or **tolerable** (Requirement 8.4).
 
 A `blocking` deviation aborts the load and leaves the previously active dataset and Schema_KB
 unchanged (Requirement 8.9). A `tolerable` deviation permits the load and is recorded in the
 ingestion report (Requirement 8.10). The Ingestion_Service validates a candidate dataset against
-every rule below **before loading any row** (Requirement 8.5), and reports each deviation with the
-deviating entity, the violated rule and that rule's declared severity.
+every rule below **before loading any row** (Requirement 8.5).
 
-Requirement 8.4 fixes four specific severities as **tolerable**: a null value in a non-key column,
-a duplicate vendor-name spelling, an amount of exactly 0, and an amount below 0.
+The schema is the organiser-provided **bank / account / transaction** shape: 3 tables, one
+database. One bank has many accounts; one account has many transactions.
 
-## Currency and precision
+> **Target database is PostgreSQL.** The organiser DDL is MySQL/InnoDB; the delivered data is
+> ingested into our PostgreSQL (keeping pgvector, the SELECT-only `tbx_reader` role and the
+> validator's Postgres dialect). Money is `numeric(15,2)`; money is never a float.
 
-- Single currency per dataset (`INR` for the seed dataset), stated by the manifest.
-- Monetary columns are fixed-precision `numeric(18,2)`; money is never represented as a float.
+## Sensitive columns
 
-## Coverage window
+`account.account_number` and `transaction.utr_number` are **sensitive**: they must be masked and
+never shown raw in an answer. `transaction.transaction_reference_id` is plaintext and searchable.
 
-- The dataset declares an inclusive first date and an inclusive last date.
-- Seed dataset coverage: **2023-01-01 to 2024-12-31**.
+- A bare "reference number" question resolves to `transaction_reference_id` (plaintext); the
+  `utr_number` column is only used when the user explicitly says "UTR".
 
 ## Entities
 
-### vendors
-
-| column | type | required | severity if missing/invalid |
-|--------|------|----------|-----------------------------|
-| vendor_id | text | yes (primary key) | blocking |
-| vendor_name | text | yes | blocking |
-| vendor_category | text | no | tolerable |
-
-- Duplicate vendor-name **spelling** (two vendor rows whose names normalise to the same form):
-  **tolerable**.
-
-### accounts
+### bank
 
 | column | type | required | severity |
 |--------|------|----------|----------|
-| account_code | text | yes (primary key) | blocking |
-| account_name | text | yes | blocking |
-| account_type | text | no | tolerable |
+| bank_code | text | yes (primary key, IFSC prefix e.g. HDFC) | blocking |
+| bank_name | text | yes (canonical all-caps name) | blocking |
 
-### transactions
-
-| column | type | unit | required | severity |
-|--------|------|------|----------|----------|
-| transaction_id | text | — | yes (primary key) | blocking |
-| transaction_date | date | — | yes | blocking |
-| amount | numeric(18,2) | INR | yes | blocking |
-| currency | text | — | yes | blocking |
-| vendor_id | text | — | no (FK → vendors) | blocking if present and unresolved |
-| account_code | text | — | no (FK → accounts) | blocking if present and unresolved |
-| category | text | — | no | tolerable |
-| description | text | — | no | tolerable |
-| reconciliation_status | text | — | no | tolerable |
-
-- Null in any **non-key** column (`category`, `description`, `reconciliation_status`, `vendor_id`,
-  `account_code`): **tolerable**.
-- Amount **exactly 0**: **tolerable**.
-- Amount **below 0**: **tolerable**.
-
-### vendor_payouts
-
-| column | type | unit | required | severity |
-|--------|------|------|----------|----------|
-| payout_id | text | — | yes (primary key) | blocking |
-| payout_date | date | — | yes | blocking |
-| amount | numeric(18,2) | INR | yes | blocking |
-| currency | text | — | yes | blocking |
-| vendor_id | text | — | yes (FK → vendors) | blocking |
-| payout_status | text | — | no | tolerable |
-| reference | text | — | no | tolerable |
-
-### reconciliation
+### account
 
 | column | type | required | severity |
 |--------|------|----------|----------|
-| reconciliation_id | text | yes (primary key) | blocking |
-| transaction_id | text | yes (FK → transactions) | blocking |
-| status | text | yes | blocking |
-| matched_at | timestamp | no | tolerable |
-| note | text | no | tolerable |
+| account_id | uuid/text | yes (primary key) | blocking |
+| entity_id | uuid/text | yes (owning customer/entity) | blocking |
+| account_number | text | yes — **sensitive**, masked | blocking |
+| program_id | integer | yes | blocking |
+| available_balance | numeric(15,2) | yes | blocking |
+| bank_code | text | yes (FK → bank.bank_code) | blocking |
 
-## Allowed reconciliation status values
+### transaction
 
-`unreconciled`, `reconciled`, `pending`, `disputed`.
+| column | type | required | severity |
+|--------|------|----------|----------|
+| transaction_id | uuid/text | yes (primary key) | blocking |
+| account_id | uuid/text | yes (FK → account.account_id) | blocking |
+| transaction_date | timestamp | yes (`YYYY-MM-DD HH:MM:SS.ssssss`) | blocking |
+| transaction_type | text enum | yes — `credit` or `debit` only | blocking; unknown value blocking |
+| description | text | no | tolerable |
+| transaction_amount | numeric(15,2) | yes | blocking |
+| transaction_reference_id | text | no (plaintext, searchable) | tolerable |
+| utr_number | text | no — **sensitive**, masked | tolerable |
 
-- A `reconciliation_status` / `status` value **outside** this set: **blocking**.
+## Referential relationships
 
-## Referential relationships the Metric_Layer depends on
+- `account.bank_code` → `bank.bank_code`
+- `transaction.account_id` → `account.account_id`
 
-- `transactions.vendor_id` → `vendors.vendor_id`
-- `transactions.account_code` → `accounts.account_code`
-- `vendor_payouts.vendor_id` → `vendors.vendor_id`
-- `reconciliation.transaction_id` → `transactions.transaction_id`
-
-A referenced key that resolves to no parent row is **blocking**, except that a **null** foreign key
-in a non-key column of `transactions` is tolerable (an unlinked transaction is permitted).
+A non-null foreign key that resolves to no parent row is **blocking**.
 
 ## Rule severity summary
 
@@ -109,11 +71,10 @@ in a non-key column of `transactions` is tolerable (an unlinked transaction is p
 |------|----------|
 | missing required column | blocking |
 | required-column value null/empty | blocking |
-| unknown reconciliation status value | blocking |
+| unknown transaction_type value (not credit/debit) | blocking |
 | unresolved non-null foreign key | blocking |
 | duplicate primary key | blocking |
 | null in a non-key column | tolerable |
-| duplicate vendor-name spelling | tolerable |
 | amount exactly 0 | tolerable |
 | amount below 0 | tolerable |
 | unknown extra column (not in the manifest mapping) | tolerable |
