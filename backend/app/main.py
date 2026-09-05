@@ -103,5 +103,12 @@ def _register_routes(app: FastAPI) -> None:
     except Exception:  # pragma: no cover - health router not yet present
         pass
 
+    try:
+        from app.routes import chat
+
+        app.include_router(chat.router)
+    except Exception:  # pragma: no cover - chat router optional
+        pass
+
 
 app = create_app()

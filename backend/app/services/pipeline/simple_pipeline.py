@@ -179,6 +179,139 @@ class SimplePipeline:
         result.total_ms = int((time.monotonic() - t_start) * 1000)
         return result
 
+    async def run_stream(self, question: str):
+        """Async generator yielding per-stage trace events for SSE (realtime FE traces).
+
+        Each event is a dict: {"event": <stage>, "data": {...}}. Stages fire in order —
+        intake, sql_generation, (clarification | static_validation, reviewer_verdict, execution,
+        answer_composition), completion — so the frontend can render the pipeline live and drive
+        filler speech. The synchronous model/DB calls run in a worker thread so events flush
+        between stages instead of blocking the event loop.
+        """
+        import asyncio
+
+        result = PipelineResult(question=question)
+        t_start = time.monotonic()
+
+        def _elapsed() -> int:
+            return int((time.monotonic() - t_start) * 1000)
+
+        yield {"event": "intake", "data": {"question": question}}
+
+        # 1) generate (or clarify)
+        yield {"event": "sql_generation", "data": {"status": "start"}}
+        try:
+            candidate = await asyncio.to_thread(self._generator.generate, question)
+        except Exception as exc:
+            result.validation_reason = f"generation error: {exc}"
+            result.total_ms = _elapsed()
+            yield {"event": "completion", "data": _stream_payload(question, result)}
+            return
+        result.candidate = candidate
+
+        if candidate.clarification:
+            result.clarification = candidate.clarification
+            result.total_ms = _elapsed()
+            yield {"event": "clarification", "data": {"question": candidate.clarification}}
+            yield {"event": "completion", "data": _stream_payload(question, result)}
+            return
+        yield {"event": "sql_generation", "data": {"status": "done", "sql": candidate.sql}}
+
+        # 2) validate
+        yield {"event": "static_validation", "data": {"status": "start"}}
+        verdict = self._validator.validate(candidate.sql, self._schema, self._intent)  # type: ignore[arg-type]
+        canonical = getattr(verdict, "canonical_sql", None)
+        if canonical is None:
+            result.validation_ok = False
+            result.validation_reason = getattr(verdict, "reason", "rejected")
+            result.total_ms = _elapsed()
+            yield {"event": "static_validation", "data": {"status": "rejected"}}
+            yield {"event": "completion", "data": _stream_payload(question, result)}
+            return
+        result.validation_ok = True
+        result.canonical_sql = canonical
+        yield {"event": "static_validation", "data": {"status": "ok", "canonical_sql": canonical}}
+
+        # 3) review
+        yield {"event": "reviewer_verdict", "data": {"status": "start"}}
+        try:
+            review = await asyncio.to_thread(self._reviewer.review, question, canonical)
+        except Exception as exc:
+            result.validation_reason = f"reviewer error: {exc}"
+            result.total_ms = _elapsed()
+            yield {"event": "completion", "data": _stream_payload(question, result)}
+            return
+        result.verdict = review
+        yield {
+            "event": "reviewer_verdict",
+            "data": {"verdict": review.verdict, "reason": review.reason},
+        }
+
+        # 4) execute + compose
+        if self._executor is not None and review.verdict == "approve":
+            yield {"event": "execution", "data": {"status": "start"}}
+            try:
+                result_tuple = await asyncio.to_thread(self._executor, canonical)
+            except Exception as exc:
+                result.validation_reason = f"execution error: {exc}"
+                result.total_ms = _elapsed()
+                yield {"event": "completion", "data": _stream_payload(question, result)}
+                return
+            if len(result_tuple) == 3:
+                columns, rows, total = result_tuple
+            else:
+                columns, rows = result_tuple
+                total = len(rows)
+            masked = mask_rows(rows, self._sensitive)
+            result.columns = columns
+            result.total_row_count = total
+            result.rows = masked[:100]
+            spec = build_chart_spec(columns, rows)
+            result.chart = spec.to_dict() if spec else None
+            yield {"event": "execution", "data": {"row_count": total, "chart": result.chart}}
+
+            yield {"event": "answer_composition", "data": {"status": "start"}}
+            if self._answer_composer is not None:
+                try:
+                    result.answer = await asyncio.to_thread(
+                        self._answer_composer.compose, question, columns, masked, total
+                    )
+                    result.answer_source = "llm"
+                except Exception:
+                    result.answer = _compose_answer(question, columns, masked, total_rows=total)
+                    result.answer_source = "template_fallback"
+            else:
+                result.answer = _compose_answer(question, columns, masked, total_rows=total)
+                result.answer_source = "template"
+            yield {"event": "answer_composition", "data": {"answer": result.answer}}
+
+        result.total_ms = _elapsed()
+        yield {"event": "completion", "data": _stream_payload(question, result)}
+
+
+def _stream_payload(question: str, r: "PipelineResult") -> dict:
+    """The terminal SSE payload — the same shape the JSON CLI/endpoint returns."""
+    return {
+        "question": question,
+        "outcome": r.outcome,
+        "clarification": r.clarification,
+        "resolved_sql": r.canonical_sql,
+        "answer_text": r.answer,
+        "answer_source": r.answer_source,
+        "chart": r.chart,
+        "verdict": (
+            {"verdict": r.verdict.verdict, "reason": r.verdict.reason} if r.verdict else None
+        ),
+        "breakdown": {
+            "columns": r.columns,
+            "rows": r.rows,
+            "total_row_count": r.total_row_count,
+        },
+        "validation_ok": r.validation_ok,
+        "validation_reason": r.validation_reason,
+        "total_ms": r.total_ms,
+    }
+
 
 def _compose_answer(
     question: str, columns: list[str], rows: list[dict], total_rows: int | None = None
