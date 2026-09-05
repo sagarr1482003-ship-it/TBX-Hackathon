@@ -427,6 +427,13 @@ class Settings(BaseSettings):
     model_prices: dict[str, Any] = Field(default_factory=dict)
     role_prompt_versions: dict[str, str] = Field(default_factory=dict)
 
+    # --- Groq provider (OpenAI-compatible) ---
+    groq_api_key: str | None = Field(default=None)
+    groq_base_url: str = Field(default="https://api.groq.com/openai/v1")
+    sql_generator_model: str = Field(default="qwen-2.5-coder-32b")
+    reviewer_model: str = Field(default="llama-3.3-70b-versatile")
+    model_request_timeout: int = Field(default=30)
+
     # ----------------------------------------------------------------------------------
     # Blank-environment-variable coercion: a set-but-empty variable falls back to the
     # field default rather than failing startup.
