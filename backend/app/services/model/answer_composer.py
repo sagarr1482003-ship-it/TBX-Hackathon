@@ -28,7 +28,9 @@ Strict rules:
 - For a large listing, answer with the total_rows count and the date range if present, not by
   characterising the amounts.
 - Do not reveal masked values (shown with bullet characters) other than as given.
-- State the currency as INR for monetary amounts.
+- State the currency as INR and use the INDIAN convention: group digits as lakh/crore
+  (e.g. INR 7,75,97,697.30) and you may phrase large amounts in crore/lakh (e.g. "77.60 crore").
+  Never use $ or dollars. When computed_metrics provides *_inr / *_words fields, prefer those.
 - Be direct: no preamble, no markdown, just the answer sentence.
 """
 

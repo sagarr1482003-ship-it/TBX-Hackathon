@@ -70,6 +70,8 @@ def gst_calculator(rows: list[dict], columns: list[str], rate: float = 0.18) -> 
     base = (total_amount / (Decimal("1") + r)).quantize(Decimal("0.01"))
     gst = (total_amount - base).quantize(Decimal("0.01"))
     half = (gst / Decimal("2")).quantize(Decimal("0.01"))
+    from app.services.pipeline.indian_format import indian_words, inr
+
     return {
         "applicable": True,
         "assumed_rate": float(rate),
@@ -79,6 +81,10 @@ def gst_calculator(rows: list[dict], columns: list[str], rate: float = 0.18) -> 
         "gst_total": str(gst),
         "cgst": str(half),
         "sgst": str(half),
+        # Indian-convention display strings for the FE / spoken answer.
+        "gross_amount_inr": inr(total_amount),
+        "gst_total_inr": inr(gst),
+        "gst_total_words": indian_words(gst),
         "rows_used": n,
         "source_column": col,
     }
@@ -101,11 +107,14 @@ def cashflow_calculator(rows: list[dict], columns: list[str]) -> dict:
             debits += a
     net = credits - debits
     ratio = float(credits / debits) if debits != 0 else None
+    from app.services.pipeline.indian_format import inr
+
     return {
         "applicable": True,
         "total_credits": str(credits.quantize(Decimal("0.01"))),
         "total_debits": str(debits.quantize(Decimal("0.01"))),
         "net_cash_flow": str(net.quantize(Decimal("0.01"))),
+        "net_cash_flow_inr": inr(net),
         "inflow_outflow_ratio": round(ratio, 4) if ratio is not None else None,
     }
 
