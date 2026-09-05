@@ -433,6 +433,11 @@ class Settings(BaseSettings):
     sql_generator_model: str = Field(default="qwen-2.5-coder-32b")
     reviewer_model: str = Field(default="llama-3.3-70b-versatile")
     model_request_timeout: int = Field(default=30)
+    # Qwen 3.x reasoning_effort (low | medium | xhigh). 'medium' is the sweet spot for
+    # structured text-to-SQL — best accuracy/token balance; 'xhigh' over-deliberates on
+    # standard relational queries. None omits the param (for non-Qwen models). Per role.
+    sql_generator_reasoning_effort: str | None = Field(default="medium")
+    reviewer_reasoning_effort: str | None = Field(default=None)
 
     # ----------------------------------------------------------------------------------
     # Blank-environment-variable coercion: a set-but-empty variable falls back to the

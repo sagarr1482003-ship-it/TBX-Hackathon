@@ -30,10 +30,16 @@ def _build() -> SimplePipeline:
     key = s.groq_api_key or ""
 
     def gen_agent():
-        return agent_for(key, s.sql_generator_model, GENERATOR_SYSTEM, base_url=s.groq_base_url)
+        return agent_for(
+            key, s.sql_generator_model, GENERATOR_SYSTEM, base_url=s.groq_base_url,
+            reasoning_effort=s.sql_generator_reasoning_effort,
+        )
 
     def rev_agent():
-        return agent_for(key, s.reviewer_model, REVIEWER_SYSTEM, base_url=s.groq_base_url)
+        return agent_for(
+            key, s.reviewer_model, REVIEWER_SYSTEM, base_url=s.groq_base_url,
+            reasoning_effort=s.reviewer_reasoning_effort,
+        )
 
     return SimplePipeline(SqlGenerator(gen_agent), ReviewerAgent(rev_agent))
 

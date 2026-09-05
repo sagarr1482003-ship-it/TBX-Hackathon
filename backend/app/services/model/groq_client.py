@@ -31,14 +31,23 @@ def build_groq_model(
     base_url: str = GROQ_DEFAULT_BASE_URL,
     temperature: float = 0.0,
     max_tokens: int = 1024,
+    reasoning_effort: str | None = None,
 ) -> OpenAIModel:
-    """Construct a Strands ``OpenAIModel`` bound to Groq for one role's model id."""
+    """Construct a Strands ``OpenAIModel`` bound to Groq for one role's model id.
+
+    ``reasoning_effort`` (Qwen 3.x: ``low`` | ``medium`` | ``xhigh``) is passed through when set.
+    ``medium`` is the recommended setting for structured text-to-SQL; leave it ``None`` for models
+    that do not support the parameter.
+    """
     if not api_key:
         raise ModelLayerError("GROQ_API_KEY is not configured")
+    params: dict = {"temperature": temperature, "max_tokens": max_tokens}
+    if reasoning_effort:
+        params["reasoning_effort"] = reasoning_effort
     return OpenAIModel(
         client_args={"api_key": api_key, "base_url": base_url},
         model_id=model_id,
-        params={"temperature": temperature, "max_tokens": max_tokens},
+        params=params,
     )
 
 
@@ -50,6 +59,7 @@ def agent_for(
     base_url: str = GROQ_DEFAULT_BASE_URL,
     temperature: float = 0.0,
     max_tokens: int = 1024,
+    reasoning_effort: str | None = None,
 ) -> Agent:
     """Construct a fresh Strands ``Agent`` for a role.
 
@@ -57,6 +67,11 @@ def agent_for(
     Trace/budget instrumentation attaches via Strands hooks (added with the orchestrator).
     """
     model = build_groq_model(
-        api_key, model_id, base_url=base_url, temperature=temperature, max_tokens=max_tokens
+        api_key,
+        model_id,
+        base_url=base_url,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        reasoning_effort=reasoning_effort,
     )
     return Agent(model=model, system_prompt=system_prompt, callback_handler=None)
