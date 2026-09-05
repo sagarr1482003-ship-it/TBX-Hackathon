@@ -44,6 +44,13 @@ target-version = "py312"
 [tool.ruff.lint]
 select = ["E", "F", "I"]
 
+# The generator/reviewer modules carry few-shot SQL exemplars in their prompts, one statement
+# per line for the model's benefit; wrapping them would hurt prompt quality. Allow long lines
+# in those two files only.
+[tool.ruff.lint.per-file-ignores]
+"app/services/model/sql_generator.py" = ["E501"]
+"app/services/model/reviewer.py" = ["E501"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 markers = [

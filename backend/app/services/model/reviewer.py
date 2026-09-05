@@ -8,10 +8,13 @@ structured output.
 
 from __future__ import annotations
 
+import re
 from typing import Literal
 
 from pydantic import BaseModel, Field
 from strands import Agent
+
+from app.services.model.groq_client import agent_text
 
 _SYSTEM = """You are a meticulous reviewer of PostgreSQL queries for a bank finance assistant.
 Given a question and a candidate SELECT, decide whether it correctly and safely answers the
@@ -25,17 +28,34 @@ Schema:
   transaction(transaction_id, account_id, transaction_date, transaction_type['credit'|'debit'],
               description, transaction_amount, transaction_reference_id, utr_number[SENSITIVE])
 
-Return the verdict object. Use 'approve' only when the query is correct and safe.
+Return your answer as exactly two lines:
+VERDICT: approve | repair | reject
+REASON: <short justification, one line>
 """
 
 
 class ReviewVerdict(BaseModel):
-    """Structured output the reviewer agent must return."""
+    """Parsed reviewer verdict."""
 
     verdict: Literal["approve", "repair", "reject"]
-    reason: str = Field(description="Short justification, <= 500 chars")
-    defect_category: str | None = Field(
-        default=None, description="Defect category when verdict is repair or reject"
+    reason: str = Field(default="")
+    defect_category: str | None = None
+
+
+def parse_verdict(text: str) -> ReviewVerdict:
+    """Parse the reviewer's two-line text response into a verdict."""
+    verdict = "reject"
+    m = re.search(r"VERDICT:\s*(approve|repair|reject)", text, re.IGNORECASE)
+    if m:
+        verdict = m.group(1).lower()
+    reason = ""
+    r = re.search(r"REASON:\s*(.+)", text, re.IGNORECASE)
+    if r:
+        reason = r.group(1).strip()[:500]
+    return ReviewVerdict(
+        verdict=verdict,  # type: ignore[arg-type]
+        reason=reason,
+        defect_category=None if verdict == "approve" else (reason[:60] or "unspecified"),
     )
 
 
@@ -51,10 +71,7 @@ class ReviewerAgent:
         agent: Agent = self._agent_factory()
         prompt = (
             f"Question: {resolved_question}\nCandidate SQL:\n{candidate_sql}\n"
-            "Return the verdict object."
+            "Give your VERDICT and REASON."
         )
-        verdict = agent.structured_output(ReviewVerdict, prompt)
-        # Trim an over-long reason defensively.
-        if len(verdict.reason) > 500:
-            verdict = verdict.model_copy(update={"reason": verdict.reason[:500]})
-        return verdict
+        text = agent_text(agent, prompt)
+        return parse_verdict(text)

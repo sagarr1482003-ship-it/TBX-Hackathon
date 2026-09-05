@@ -33,12 +33,14 @@ def _build() -> SimplePipeline:
         return agent_for(
             key, s.sql_generator_model, GENERATOR_SYSTEM, base_url=s.groq_base_url,
             reasoning_effort=s.sql_generator_reasoning_effort,
+            max_tokens=s.sql_generator_max_tokens,
         )
 
     def rev_agent():
         return agent_for(
             key, s.reviewer_model, REVIEWER_SYSTEM, base_url=s.groq_base_url,
             reasoning_effort=s.reviewer_reasoning_effort,
+            max_tokens=s.reviewer_max_tokens,
         )
 
     return SimplePipeline(SqlGenerator(gen_agent), ReviewerAgent(rev_agent))

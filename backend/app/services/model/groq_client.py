@@ -30,18 +30,19 @@ def build_groq_model(
     *,
     base_url: str = GROQ_DEFAULT_BASE_URL,
     temperature: float = 0.0,
-    max_tokens: int = 1024,
+    max_tokens: int | None = None,
     reasoning_effort: str | None = None,
 ) -> OpenAIModel:
     """Construct a Strands ``OpenAIModel`` bound to Groq for one role's model id.
 
-    ``reasoning_effort`` (Qwen 3.x: ``low`` | ``medium`` | ``xhigh``) is passed through when set.
-    ``medium`` is the recommended setting for structured text-to-SQL; leave it ``None`` for models
-    that do not support the parameter.
+    ``reasoning_effort`` (Qwen 3.x: ``low`` | ``medium`` | ``xhigh``) is passed through when set;
+    ``low`` is recommended for text-to-SQL. ``max_tokens`` is omitted when ``None`` (uncapped).
     """
     if not api_key:
         raise ModelLayerError("GROQ_API_KEY is not configured")
-    params: dict = {"temperature": temperature, "max_tokens": max_tokens}
+    params: dict = {"temperature": temperature}
+    if max_tokens is not None:
+        params["max_tokens"] = max_tokens
     if reasoning_effort:
         params["reasoning_effort"] = reasoning_effort
     return OpenAIModel(
@@ -58,7 +59,7 @@ def agent_for(
     *,
     base_url: str = GROQ_DEFAULT_BASE_URL,
     temperature: float = 0.0,
-    max_tokens: int = 1024,
+    max_tokens: int | None = None,
     reasoning_effort: str | None = None,
 ) -> Agent:
     """Construct a fresh Strands ``Agent`` for a role.
@@ -75,3 +76,15 @@ def agent_for(
         reasoning_effort=reasoning_effort,
     )
     return Agent(model=model, system_prompt=system_prompt, callback_handler=None)
+
+
+def agent_text(agent: Agent, prompt: str) -> str:
+    """Invoke a Strands agent and return its final text response.
+
+    Plain-text invocation avoids the function-calling wrapping of ``structured_output``, which
+    some reasoning models on OpenAI-compatible endpoints fail to complete. Callers parse the
+    text themselves (e.g. extract one SELECT).
+    """
+    result = agent(prompt)
+    # AgentResult stringifies to the final assistant text.
+    return str(result).strip()
