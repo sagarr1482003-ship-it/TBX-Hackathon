@@ -1,0 +1,147 @@
+@import "tailwindcss";
+@import "@fontsource/outfit/400.css";
+@import "@fontsource/outfit/500.css";
+@import "@fontsource/outfit/600.css";
+@import "@fontsource/outfit/700.css";
+@import "@fontsource/jetbrains-mono/400.css";
+@import "@fontsource/jetbrains-mono/500.css";
+@import "@fontsource/jetbrains-mono/600.css";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: "Outfit", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  --color-paper: #f6f7f6;
+  --color-surface: #ffffff;
+  --color-sunken: #eef0ee;
+  --color-line: #dee2df;
+  --color-ink: #12141a;
+  --color-ink-muted: #565b60;
+  --color-ink-faint: #8b9096;
+
+  --color-paper-dark: #0d0f11;
+  --color-surface-dark: #15181b;
+  --color-sunken-dark: #1b1f23;
+  --color-line-dark: #262b2f;
+  --color-ink-dark: #edefef;
+  --color-ink-muted-dark: #9aa0a6;
+  --color-ink-faint-dark: #6b7278;
+
+  --color-accent: #0f6b52;
+  --color-accent-strong: #0b5643;
+  --color-accent-soft: #e6f1ed;
+  --color-accent-dark: #34c79e;
+  --color-accent-soft-dark: rgba(52, 199, 158, 0.14);
+
+  --color-amber: #9a6b12;
+  --color-amber-soft: #f7efdd;
+  --color-amber-dark: #d9a63f;
+  --color-amber-soft-dark: rgba(217, 166, 63, 0.14);
+
+  --color-brick: #a23b3b;
+  --color-brick-soft: #f8e9e7;
+  --color-brick-dark: #e2685f;
+  --color-brick-soft-dark: rgba(226, 104, 95, 0.14);
+
+  --radius-panel: 10px;
+}
+
+html {
+  color-scheme: light dark;
+}
+
+body {
+  margin: 0;
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  -webkit-font-smoothing: antialiased;
+}
+
+html.dark body {
+  background: var(--color-paper-dark);
+  color: var(--color-ink-dark);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+::selection {
+  background: var(--color-accent-soft);
+  color: var(--color-accent-strong);
+}
+
+html.dark ::selection {
+  background: var(--color-accent-soft-dark);
+  color: var(--color-accent-dark);
+}
+
+@keyframes msg-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.msg-in {
+  animation: msg-in 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes buddy-wave {
+  0%, 100% { transform: scaleY(0.25); }
+  50% { transform: scaleY(1); }
+}
+
+.buddy-bar {
+  animation: buddy-wave 0.9s ease-in-out infinite;
+  transform-origin: bottom;
+}
+
+@keyframes chart-fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.chart-fade-in {
+  animation: chart-fade-in 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@keyframes va-pulse {
+  0%, 100% { transform: scale(1); opacity: 0.8; }
+  50% { transform: scale(1.1); opacity: 1; }
+}
+
+@keyframes va-ripple {
+  0% { transform: scale(0.8); opacity: 1; }
+  100% { transform: scale(2.5); opacity: 0; }
+}
+
+@keyframes va-waveform {
+  0%, 100% { height: 16px; }
+  50% { height: 48px; }
+}
+
+.va-orb-idle {
+  animation: va-pulse 3s ease-in-out infinite;
+}
+
+.va-orb-listening {
+  animation: va-pulse 1.5s ease-in-out infinite;
+}
+
+.va-orb-thinking {
+  animation: va-pulse 0.8s ease-in-out infinite;
+}
+
+.va-ripple {
+  animation: va-ripple 2s cubic-bezier(0, 0.2, 0.8, 1) infinite;
+}

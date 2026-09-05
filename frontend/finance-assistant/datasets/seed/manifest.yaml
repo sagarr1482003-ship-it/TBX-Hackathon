@@ -1,0 +1,88 @@
+# Seed dataset manifest (Requirement 5.1, 8.1). Source column names are identity-mapped to
+# canonical names; monetary columns carry the ₹ symbol, "," thousands separator and are written
+# with parentheses for negatives, exercising the Local_File_Connector's Requirement 6.4 parsing.
+dataset_id: tbx_seed
+version: "1"
+source_mode: local_files
+encoding: utf-8
+currency: INR
+currency_symbols: ["\u20b9", "Rs.", "INR"]
+thousands_separator: ","
+coverage:
+  first_date: 2023-01-01
+  last_date: 2024-12-31
+reference_date_policy: latest_transaction_date
+
+data_dictionary:
+  kind: csv
+  path: datasets/seed/data_dictionary.csv
+  entity_column: entity
+  column_column: column
+  description_column: description
+
+entities:
+  - name: vendors
+    source: { kind: local_file, path: datasets/seed/vendors.csv, file_format: csv }
+    primary_key: [vendor_id]
+    identifier_field: vendor_id
+    columns:
+      - { source_name: vendor_id, canonical_name: vendor_id, type: text, required: true, is_join_key: true }
+      - { source_name: vendor_name, canonical_name: vendor_name, type: text, required: true, is_filter_column: true }
+      - { source_name: vendor_category, canonical_name: vendor_category, type: text }
+
+  - name: accounts
+    source: { kind: local_file, path: datasets/seed/accounts.csv, file_format: csv }
+    primary_key: [account_code]
+    identifier_field: account_code
+    columns:
+      - { source_name: account_code, canonical_name: account_code, type: text, required: true, is_join_key: true }
+      - { source_name: account_name, canonical_name: account_name, type: text, required: true }
+      - { source_name: account_type, canonical_name: account_type, type: text }
+
+  - name: transactions
+    source: { kind: local_file, path: datasets/seed/transactions.csv, file_format: csv }
+    primary_key: [transaction_id]
+    identifier_field: transaction_id
+    columns:
+      - { source_name: transaction_id, canonical_name: transaction_id, type: text, required: true }
+      - { source_name: transaction_date, canonical_name: transaction_date, type: date, required: true, date_format: "%Y-%m-%d", is_filter_column: true }
+      - { source_name: amount, canonical_name: amount, type: numeric, required: true, numeric_scale: 2, unit: INR }
+      - { source_name: currency, canonical_name: currency, type: text, required: true }
+      - { source_name: vendor_id, canonical_name: vendor_id, type: text, is_filter_column: true, is_join_key: true }
+      - { source_name: account_code, canonical_name: account_code, type: text, is_filter_column: true, is_join_key: true }
+      - { source_name: category, canonical_name: category, type: text, is_filter_column: true }
+      - { source_name: description, canonical_name: description, type: text }
+      - { source_name: reconciliation_status, canonical_name: reconciliation_status, type: text, is_filter_column: true }
+    joins:
+      - { target_entity: vendors, local_columns: [vendor_id], target_columns: [vendor_id] }
+      - { target_entity: accounts, local_columns: [account_code], target_columns: [account_code] }
+
+  - name: vendor_payouts
+    source: { kind: local_file, path: datasets/seed/vendor_payouts.csv, file_format: csv }
+    primary_key: [payout_id]
+    identifier_field: payout_id
+    columns:
+      - { source_name: payout_id, canonical_name: payout_id, type: text, required: true }
+      - { source_name: payout_date, canonical_name: payout_date, type: date, required: true, date_format: "%Y-%m-%d", is_filter_column: true }
+      - { source_name: amount, canonical_name: amount, type: numeric, required: true, numeric_scale: 2, unit: INR }
+      - { source_name: currency, canonical_name: currency, type: text, required: true }
+      - { source_name: vendor_id, canonical_name: vendor_id, type: text, required: true, is_filter_column: true, is_join_key: true }
+      - { source_name: payout_status, canonical_name: payout_status, type: text, is_filter_column: true }
+      - { source_name: reference, canonical_name: reference, type: text }
+    joins:
+      - { target_entity: vendors, local_columns: [vendor_id], target_columns: [vendor_id] }
+
+  - name: reconciliation
+    source: { kind: local_file, path: datasets/seed/reconciliation.csv, file_format: csv }
+    primary_key: [reconciliation_id]
+    identifier_field: reconciliation_id
+    columns:
+      - { source_name: reconciliation_id, canonical_name: reconciliation_id, type: text, required: true }
+      - { source_name: transaction_id, canonical_name: transaction_id, type: text, required: true, is_join_key: true }
+      - { source_name: status, canonical_name: status, type: text, required: true, is_filter_column: true }
+      - { source_name: matched_at, canonical_name: matched_at, type: timestamp, date_format: "%Y-%m-%dT%H:%M:%S%z" }
+      - { source_name: note, canonical_name: note, type: text }
+    joins:
+      - { target_entity: transactions, local_columns: [transaction_id], target_columns: [transaction_id] }
+
+metrics: []

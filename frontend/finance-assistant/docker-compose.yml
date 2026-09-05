@@ -1,0 +1,50 @@
+# One documented command brings the stack up:
+#   docker compose up --build
+# Add the ollama profile for a local model provider:
+#   docker compose --profile ollama up --build
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: tbx_app
+      POSTGRES_PASSWORD: tbx_app
+      POSTGRES_DB: tbx
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tbx_app -d tbx"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRES_DSN: postgresql+asyncpg://tbx_app:tbx_app@postgres:5432/tbx
+      POSTGRES_READER_USER: tbx_reader
+      POSTGRES_READER_PASSWORD: tbx_reader
+      POSTGRES_READER_DSN: postgresql+asyncpg://tbx_reader:tbx_reader@postgres:5432/tbx
+      BIND_HOST: 0.0.0.0
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["ollama"]
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollamadata:/root/.ollama
+
+volumes:
+  pgdata:
+  ollamadata:
