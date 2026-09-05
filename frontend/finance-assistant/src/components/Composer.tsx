@@ -151,30 +151,29 @@ export function Composer({ onSubmit, disabled }: { onSubmit: (text: string) => v
             className="max-h-28 flex-1 resize-none bg-transparent py-1 text-sm text-ink placeholder:text-ink-faint focus:outline-none disabled:opacity-60 dark:text-ink-dark dark:placeholder:text-ink-faint-dark"
           />
 
-          {value.trim() ? (
-            <button
-              onClick={submit}
-              disabled={disabled}
-              aria-label="Send question"
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] bg-ink text-paper transition-opacity disabled:opacity-30 dark:bg-ink-dark dark:text-paper-dark"
-            >
-              <ArrowUp size={15} weight="bold" />
-            </button>
-          ) : (
-            <button
-              onClick={startRecording}
-              disabled={disabled || transcribing || !recorder.isSupported}
-              aria-label={recorder.isSupported ? 'Record voice message' : 'Recording not supported'}
-              title={recorder.isSupported ? 'Record voice message' : 'Recording not supported in this browser'}
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] bg-ink text-paper transition-opacity disabled:opacity-30 dark:bg-ink-dark dark:text-paper-dark"
-            >
-              {transcribing ? (
-                <CircleNotch size={15} weight="bold" className="animate-spin" />
-              ) : (
-                <Microphone size={15} weight="fill" />
-              )}
-            </button>
-          )}
+          {/* Mic is always available; the send button appears when there's text. */}
+          <button
+            onClick={startRecording}
+            disabled={disabled || transcribing || !recorder.isSupported}
+            aria-label={recorder.isSupported ? 'Record voice message' : 'Recording not supported'}
+            title={recorder.isSupported ? 'Record voice message' : 'Recording not supported in this browser'}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] border border-line text-ink transition-opacity hover:bg-sunken disabled:opacity-30 dark:border-line-dark dark:text-ink-dark dark:hover:bg-sunken-dark"
+          >
+            {transcribing ? (
+              <CircleNotch size={15} weight="bold" className="animate-spin" />
+            ) : (
+              <Microphone size={15} weight="fill" />
+            )}
+          </button>
+
+          <button
+            onClick={submit}
+            disabled={disabled || !value.trim()}
+            aria-label="Send question"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] bg-ink text-paper transition-opacity disabled:opacity-30 dark:bg-ink-dark dark:text-paper-dark"
+          >
+            <ArrowUp size={15} weight="bold" />
+          </button>
         </div>
       )}
     </div>
