@@ -181,7 +181,7 @@ class SimplePipeline:
         result.total_ms = int((time.monotonic() - t_start) * 1000)
         return result
 
-    async def run_stream(self, question: str):
+    async def run_stream(self, question: str, history: list | None = None):
         """Async generator yielding per-stage trace events for SSE (realtime FE traces).
 
         Each event is a dict: {"event": <stage>, "data": {...}}. Stages fire in order —
@@ -219,7 +219,7 @@ class SimplePipeline:
                  {"role": "sql_generator", "model": self._model_id("sql_generator")})
         t = time.monotonic()
         try:
-            candidate = await asyncio.to_thread(self._generator.generate, question)
+            candidate = await asyncio.to_thread(self._generator.generate, question, history)
         except Exception as exc:
             result.validation_reason = f"generation error: {exc}"
             result.total_ms = _elapsed()
