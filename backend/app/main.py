@@ -110,5 +110,12 @@ def _register_routes(app: FastAPI) -> None:
     except Exception:  # pragma: no cover - chat router optional
         pass
 
+    try:
+        from app.routes import voice
+
+        app.include_router(voice.router)
+    except Exception:  # pragma: no cover - voice router optional
+        pass
+
 
 app = create_app()
