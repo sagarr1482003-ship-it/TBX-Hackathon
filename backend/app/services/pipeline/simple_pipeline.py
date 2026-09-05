@@ -201,7 +201,17 @@ class SimplePipeline:
 
         def ev(stage, status, kind, detail, ms=None):
             """One trace event. kind: 'llm_tool_call' | 'deterministic_guardrail' | 'db' | 'io'.
-            The FE renders the pipeline from (stage, status, kind, duration_ms, detail)."""
+            The FE renders the pipeline from (stage, status, kind, duration_ms, elapsed_ms, detail).
+            ``elapsed_ms`` = time since request start; the first event's elapsed_ms is the TTFT."""
+            e = int((time.monotonic() - t_start) * 1000)
+            if timing["ttft_ms"] is None:
+                timing["ttft_ms"] = e  # first event emitted = time to first token/event
+            if (
+                stage == "answer_composition"
+                and status == "ok"
+                and timing["first_answer_ms"] is None
+            ):
+                timing["first_answer_ms"] = e
             return {
                 "event": stage,
                 "data": {
@@ -209,9 +219,12 @@ class SimplePipeline:
                     "status": status,       # start | ok | error | skipped | rejected
                     "kind": kind,
                     "duration_ms": ms,
+                    "elapsed_ms": e,
                     "detail": detail,
                 },
             }
+
+        timing = {"ttft_ms": None, "first_answer_ms": None}
 
         tokens = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "llm_calls": 0}
 
@@ -236,7 +249,7 @@ class SimplePipeline:
             result.validation_reason = f"generation error: {exc}"
             result.total_ms = _elapsed()
             yield ev("sql_generation", "error", "llm_tool_call", {"error": str(exc)[:200]})
-            yield {"event": "completion", "data": _stream_payload(question, result, tokens)}
+            yield {"event": "completion", "data": _stream_payload(question, result, tokens, timing)}
             return
         gen_ms = int((time.monotonic() - t) * 1000)
         result.candidate = candidate
@@ -248,7 +261,7 @@ class SimplePipeline:
             yield ev("clarification", "ok", "deterministic_guardrail",
                      {"guardrail": "ambiguity_check", "question": candidate.clarification,
                       "usage": gen_usage}, gen_ms)
-            yield {"event": "completion", "data": _stream_payload(question, result, tokens)}
+            yield {"event": "completion", "data": _stream_payload(question, result, tokens, timing)}
             return
         yield ev("sql_generation", "ok", "llm_tool_call",
                  {"sql": candidate.sql, "usage": gen_usage}, gen_ms)
@@ -267,7 +280,7 @@ class SimplePipeline:
             yield ev("static_validation", "rejected", "deterministic_guardrail",
                      {"guardrail": "sql_ast_validator", "reason": result.validation_reason,
                       "category": getattr(verdict, "category", None)}, val_ms)
-            yield {"event": "completion", "data": _stream_payload(question, result, tokens)}
+            yield {"event": "completion", "data": _stream_payload(question, result, tokens, timing)}
             return
         result.validation_ok = True
         result.canonical_sql = canonical
@@ -292,7 +305,7 @@ class SimplePipeline:
             result.validation_reason = f"reviewer error: {exc}"
             result.total_ms = _elapsed()
             yield ev("reviewer_verdict", "error", "llm_tool_call", {"error": str(exc)[:200]})
-            yield {"event": "completion", "data": _stream_payload(question, result, tokens)}
+            yield {"event": "completion", "data": _stream_payload(question, result, tokens, timing)}
             return
         rev_ms = int((time.monotonic() - t) * 1000)
         result.verdict = review
@@ -328,7 +341,7 @@ class SimplePipeline:
                                   "max_plan_cost": self._max_plan_cost}, plan_ms)
                         yield {
                             "event": "completion",
-                            "data": _stream_payload(question, result, tokens),
+                            "data": _stream_payload(question, result, tokens, timing),
                         }
                         return
                     yield ev("plan_inspection", "ok", "deterministic_guardrail",
@@ -345,7 +358,10 @@ class SimplePipeline:
                 result.validation_reason = f"execution error: {exc}"
                 result.total_ms = _elapsed()
                 yield ev("execution", "error", "db", {"error": str(exc)[:200]})
-                yield {"event": "completion", "data": _stream_payload(question, result, tokens)}
+                yield {
+                    "event": "completion",
+                    "data": _stream_payload(question, result, tokens, timing),
+                }
                 return
             exec_ms = int((time.monotonic() - t) * 1000)
             if len(result_tuple) == 3:
@@ -405,7 +421,7 @@ class SimplePipeline:
                       "usage": comp_usage, "computed_metrics": result.computed_metrics}, comp_ms)
 
         result.total_ms = _elapsed()
-        yield {"event": "completion", "data": _stream_payload(question, result, tokens)}
+        yield {"event": "completion", "data": _stream_payload(question, result, tokens, timing)}
 
     def _model_id(self, role: str) -> str | None:
         """Best-effort model id for a role, for the trace (None if not resolvable)."""
@@ -422,8 +438,11 @@ class SimplePipeline:
             return None
 
 
-def _stream_payload(question: str, r: "PipelineResult", tokens: dict | None = None) -> dict:
+def _stream_payload(
+    question: str, r: "PipelineResult", tokens: dict | None = None, timing: dict | None = None
+) -> dict:
     """The terminal SSE payload — the same shape the JSON CLI/endpoint returns."""
+    timing = timing or {}
     return {
         "question": question,
         "outcome": r.outcome,
@@ -433,6 +452,8 @@ def _stream_payload(question: str, r: "PipelineResult", tokens: dict | None = No
         "answer_source": r.answer_source,
         "chart": r.chart,
         "computed_metrics": r.computed_metrics,
+        "ttft_ms": timing.get("ttft_ms"),
+        "first_answer_ms": timing.get("first_answer_ms"),
         "token_usage": tokens or {
             "input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "llm_calls": 0
         },
