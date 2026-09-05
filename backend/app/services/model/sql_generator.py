@@ -53,6 +53,13 @@ RULES:
 - When a specific account_id/bank/period/type is named, ALWAYS include it as a WHERE filter.
 - Output ONLY the SQL statement — no prose, no explanation, no markdown fences.
 
+PERFORMANCE (the transaction table is very large — millions of rows; avoid full scans):
+- Indexed columns on transaction: account_id, transaction_type, transaction_date, transaction_amount.
+- Whenever an account_id is given, ALWAYS filter WHERE account_id = '<id>' — this is fast (indexed).
+- For a plain row listing, ALWAYS add LIMIT (default 100) so it never scans the whole table.
+- Prefer narrow WHERE filters (account_id, transaction_type, a date range) over unfiltered
+  aggregates. Only omit filters when the user explicitly asks for an all-accounts total.
+
 If the question truly cannot be turned into one correct query (missing an essential detail, or
 references data not in this schema), do NOT guess. Output exactly one line:
 CLARIFY: <one short, specific follow-up question>

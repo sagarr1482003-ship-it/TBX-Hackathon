@@ -22,6 +22,7 @@ dependencies = [
     "openai>=3.8.0",
     "psycopg[binary]>=3.3.5",
     "psycopg-pool>=3.3.1",
+    "pymysql>=1.2.0",
 ]
 
 [project.optional-dependencies]

@@ -32,11 +32,14 @@ def build_groq_model(
     temperature: float = 0.0,
     max_tokens: int | None = None,
     reasoning_effort: str | None = None,
+    max_retries: int = 2,
 ) -> OpenAIModel:
     """Construct a Strands ``OpenAIModel`` bound to Groq for one role's model id.
 
     ``reasoning_effort`` (Qwen 3.x: ``low`` | ``medium`` | ``xhigh``) is passed through when set;
     ``low`` is recommended for text-to-SQL. ``max_tokens`` is omitted when ``None`` (uncapped).
+    ``max_retries=0`` makes a 429 (rate limit) raise immediately instead of the OpenAI client
+    silently retrying with backoff — so the caller's fallback (OpenRouter) engages fast.
     """
     if not api_key:
         raise ModelLayerError("GROQ_API_KEY is not configured")
@@ -46,7 +49,7 @@ def build_groq_model(
     if reasoning_effort:
         params["reasoning_effort"] = reasoning_effort
     return OpenAIModel(
-        client_args={"api_key": api_key, "base_url": base_url},
+        client_args={"api_key": api_key, "base_url": base_url, "max_retries": max_retries},
         model_id=model_id,
         params=params,
     )
@@ -61,6 +64,7 @@ def agent_for(
     temperature: float = 0.0,
     max_tokens: int | None = None,
     reasoning_effort: str | None = None,
+    max_retries: int = 2,
 ) -> Agent:
     """Construct a fresh Strands ``Agent`` for a role.
 
@@ -74,6 +78,7 @@ def agent_for(
         temperature=temperature,
         max_tokens=max_tokens,
         reasoning_effort=reasoning_effort,
+        max_retries=max_retries,
     )
     return Agent(model=model, system_prompt=system_prompt, callback_handler=None)
 
@@ -94,25 +99,60 @@ def _extract_usage(result) -> dict:
     return usage
 
 
+def _extract_text(result) -> str:
+    """Best-effort final assistant text from a Strands AgentResult.
+
+    ``str(result)`` works for most providers, but some (e.g. Gemini via the OpenAI-compat layer,
+    whose message carries a thought_signature) can render empty. Fall back to walking the
+    AgentResult's message content blocks for the text.
+    """
+    text = str(result).strip()
+    if text:
+        return text
+    # Walk result.message["content"] -> list of blocks with a "text" field.
+    try:
+        msg = getattr(result, "message", None)
+        content = msg.get("content") if isinstance(msg, dict) else getattr(msg, "content", None)
+        if isinstance(content, str):
+            return content.strip()
+        if isinstance(content, list):
+            parts = []
+            for block in content:
+                if isinstance(block, dict) and block.get("text"):
+                    parts.append(str(block["text"]))
+                elif hasattr(block, "text") and getattr(block, "text"):
+                    parts.append(str(block.text))
+            return "".join(parts).strip()
+    except Exception:
+        pass
+    return ""
+
+
 def agent_text_with_usage(agent: Agent, prompt: str) -> tuple[str, dict]:
     """Invoke a Strands agent; return (final text, token-usage dict)."""
     result = agent(prompt)
-    return str(result).strip(), _extract_usage(result)
+    return _extract_text(result), _extract_usage(result)
 
 
 def call_with_fallback(primary_factory, fallback_factory, prompt: str) -> tuple[str, dict]:
-    """Call the primary agent; on ANY failure, retry once with the fallback agent.
+    """Call the primary agent; on failure OR empty output, retry once with the fallback agent.
 
     Both factories are zero-arg callables returning a fresh Strands Agent. ``fallback_factory``
-    may be None (no fallback configured) — then the primary error propagates. Used so a Groq
-    outage/rate-limit transparently fails over to OpenRouter.
+    may be None (no fallback configured) — then the primary error/empty result stands. Used so a
+    rate-limit, outage, or empty response transparently fails over to the backup provider.
     """
     try:
-        return agent_text_with_usage(primary_factory(), prompt)
+        text, usage = agent_text_with_usage(primary_factory(), prompt)
+        if text:
+            return text, usage
     except Exception:
         if fallback_factory is None:
             raise
         return agent_text_with_usage(fallback_factory(), prompt)
+    # Primary returned empty (no exception): use fallback if available, else return the empty.
+    if fallback_factory is None:
+        return "", usage
+    return agent_text_with_usage(fallback_factory(), prompt)
 
 
 def agent_text(agent: Agent, prompt: str) -> str:

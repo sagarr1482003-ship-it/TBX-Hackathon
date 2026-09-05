@@ -418,6 +418,14 @@ class Settings(BaseSettings):
     postgres_reader_password: str | None = Field(default=None)
     postgres_reader_dsn: str | None = Field(default=None)
     reader_pool_size: int = Field(default=DEFAULT_READER_POOL_SIZE)
+    # --- Database dialect: 'postgres' (local seed) or 'mysql' (connect to an external MySQL). ---
+    # When 'mysql', the executor uses pymysql and the generator/validator target MySQL syntax.
+    db_dialect: str = Field(default="postgres")
+    mysql_host: str = Field(default="")
+    mysql_port: int = Field(default=3306)
+    mysql_db: str = Field(default="")
+    mysql_user: str = Field(default="")
+    mysql_password: str = Field(default="")
     # EXPLAIN cost gate: reject a query whose planner-estimated total cost exceeds this, before
     # executing it (catches a runaway plan). Generous default for the demo dataset; tune per DB.
     max_plan_cost: float = Field(default=5_000_000.0)
@@ -442,6 +450,14 @@ class Settings(BaseSettings):
     openrouter_api_key: str | None = Field(default=None)
     openrouter_base_url: str = Field(default="https://openrouter.ai/api/v1")
     openrouter_model: str = Field(default="qwen/qwen3-30b-a3b")
+    # --- Gemini primary (OpenAI-compatible endpoint) ---
+    # When gemini_api_key is set, Gemini becomes the PRIMARY model for all roles (Groq/OpenRouter
+    # remain as fallback). Uses Google's OpenAI-compatible endpoint.
+    gemini_api_key: str | None = Field(default=None)
+    gemini_base_url: str = Field(
+        default="https://generativelanguage.googleapis.com/v1beta/openai/"
+    )
+    gemini_model: str = Field(default="gemini-3.8-flash")
     model_request_timeout: int = Field(default=30)
     # Qwen 3.x reasoning_effort (low | medium | xhigh). For a single-line SELECT there is
     # nothing to deliberate: 'medium'/'xhigh' burn the whole token budget on chain-of-thought

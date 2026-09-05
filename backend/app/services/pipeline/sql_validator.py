@@ -229,6 +229,10 @@ class SqlValidator:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
         self.function_allowlist = _DEFAULT_FUNCTION_ALLOWLIST
+        # SQL dialect for parse + canonical rewrite. MySQL when connected to an external MySQL.
+        self._dialect = (
+            "mysql" if getattr(self.settings, "db_dialect", "postgres") == "mysql" else "postgres"
+        )
 
     def validate(
         self,
@@ -242,7 +246,7 @@ class SqlValidator:
         parameters = dict(parameters or {})
 
         try:
-            statements = sqlglot.parse(sql, dialect="postgres")
+            statements = sqlglot.parse(sql, dialect=self._dialect)
         except ParseError as exc:
             return RejectVerdict(reason=str(exc), category="parse_error")
         except Exception as exc:  # any parser failure is a rejection, not a bypass
@@ -344,7 +348,7 @@ class SqlValidator:
                 guardrail_violation=True,
             )
 
-        canonical_sql = root.sql(dialect="postgres")
+        canonical_sql = root.sql(dialect=self._dialect)
         return AcceptVerdict(
             canonical_sql=canonical_sql,
             parameters=parameters,
