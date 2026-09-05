@@ -21,6 +21,7 @@ leak those identifiers, must not invent figures, and must be auditable. TBX enfo
 | Control | How it is enforced | Regulatory concern |
 |---|---|---|
 | **Sensitive-data masking** | `account_number` and `utr_number` are flagged `sensitive` in the dataset contract; `app/services/pipeline/masking.py` masks them (account number → last-4 only, UTR → fully redacted) before any value reaches an answer, export or trace. Verified by `tests/unit/test_masking.py`. | RBI customer-data protection; DPDP data minimisation |
+| **PII encryption at rest** | Sensitive columns are encrypted with **AES-256-GCM** (`app/services/pipeline/pii_crypto.py`) before being written to PostgreSQL and decrypted only in memory on the read path. A database dump or stolen backup exposes ciphertext, not account numbers or UTRs. The 256-bit key lives in secret config only (`PII_ENCRYPTION_KEY`), generated via `scripts/gen_pii_key.py`; GCM's auth tag makes tampering detectable. Verified by `tests/unit/test_pii_crypto.py` (round-trip, tamper-detection, wrong-key). | RBI / DPDP data-at-rest protection |
 | **Read-only data access** | The assistant connects through a dedicated `tbx_reader` PostgreSQL role that is `SELECT`-only with `default_transaction_read_only = on`; the `SQL_Validator` is an allowlist that rejects any DDL/DML/privilege/transaction-control statement. A model can never mutate or exfiltrate beyond a read. | RBI data-integrity; least-privilege access |
 | **No fabricated figures (grounding)** | Every number in an answer must trace to an executed query result or a computation record; the `Groundedness_Checker` rejects any ungrounded numeral. The model never performs arithmetic. | Fair, accurate, non-misleading financial information (SEBI investor-protection spirit) |
 | **Deterministic computation** | All money is `Decimal` end to end — never floating point — so figures are exact and reproducible. | Accurate financial computation |
@@ -42,7 +43,9 @@ documented in `docs/dataset_contract.md` and enforced by the masking layer.
 
 ## Roadmap to production compliance (out of scope for the prototype)
 
-- Encryption at rest and TLS in transit for all financial data.
+- TLS in transit for all financial data (encryption **at rest** for sensitive columns is
+  implemented — see the controls table; key management uses env/secret config, and a production
+  deployment would move the key into a managed KMS/HSM with rotation).
 - KYC / customer-consent management and DPDP consent artefacts.
 - RBI data-localisation (India-resident storage and processing).
 - Multi-tenant isolation, authentication and role-based access beyond the prototype's

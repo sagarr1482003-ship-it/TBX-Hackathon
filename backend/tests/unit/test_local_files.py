@@ -74,3 +74,36 @@ def test_sql_dump_insert_only() -> None:
         ["INSERT INTO x VALUES (1);", "DROP TABLE finance.vendors;"]
     )
     assert not sql_dump_statements_are_insert_only(["UPDATE finance.vendors SET x=1;"])
+
+
+def test_coerce_row_encrypts_sensitive_columns() -> None:
+    """The ingestion write path encrypts sensitive columns at rest (RBI / DPDP)."""
+    from app.schemas.manifest import EntitySpec, LocalFileSource
+    from app.services.ingestion.local_files import coerce_row
+    from app.services.pipeline.pii_crypto import PiiCipher, generate_key
+
+    entity = EntitySpec(
+        name="account",
+        source=LocalFileSource(path="account.csv"),
+        primary_key=["account_id"],
+        identifier_field="account_id",
+        columns=[
+            ColumnSpec(
+                source_name="account_id", canonical_name="account_id", type="text",
+                required=True,
+            ),
+            ColumnSpec(
+                source_name="account_number", canonical_name="account_number", type="text",
+                required=True,
+            ),
+        ],
+    )
+    cipher = PiiCipher(generate_key())
+    row = {"account_id": "a1", "account_number": "50200013729069"}
+    typed, _ = coerce_row(
+        row, entity, ["\u20b9"], ",", sensitive=frozenset({"account_number"}), cipher=cipher
+    )
+    assert typed["account_number"].startswith("enc:v1:")
+    assert "50200013729069" not in typed["account_number"]
+    assert typed["account_id"] == "a1"
+    assert cipher.decrypt(typed["account_number"]) == "50200013729069"

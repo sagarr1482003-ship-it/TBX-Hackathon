@@ -418,6 +418,10 @@ class Settings(BaseSettings):
     postgres_reader_password: str | None = Field(default=None)
     postgres_reader_dsn: str | None = Field(default=None)
     reader_pool_size: int = Field(default=DEFAULT_READER_POOL_SIZE)
+    # AES-256 key (base64) for encrypting sensitive PII columns at rest. Generate with
+    # `python -m scripts.gen_pii_key`. Blank => PII encryption disabled (dev only; a warning
+    # is logged at startup, mirroring the unauthenticated-API warning).
+    pii_encryption_key: str | None = Field(default=None)
 
     # --- Model routing (design-added) ---
     model_prices: dict[str, Any] = Field(default_factory=dict)

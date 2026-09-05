@@ -115,11 +115,18 @@ def coerce_row(
     entity: EntitySpec,
     currency_symbols: list[str],
     thousands_separator: str,
+    *,
+    sensitive: frozenset[str] | None = None,
+    cipher: object | None = None,
 ) -> tuple[dict[str, Any], bool]:
     """Coerce one raw row into typed values. Returns (typed_row, rounded).
 
     Raises ValueError on a type coercion failure or a required-column blank (Requirement 6.5).
     Empty non-required cells become NULL (Requirement 6.12).
+
+    When a ``cipher`` (a ``PiiCipher``) and a ``sensitive`` column set are supplied, sensitive
+    columns are encrypted at rest (AES-256-GCM) before being returned for load — so ciphertext,
+    not raw account numbers or UTRs, is written to PostgreSQL (RBI / DPDP data-at-rest).
     """
     typed: dict[str, Any] = {}
     rounded = False
@@ -133,6 +140,10 @@ def coerce_row(
         typed[col.canonical_name] = _coerce_value(
             raw, col, currency_symbols, thousands_separator
         )
+    if cipher is not None and sensitive:
+        for name in sensitive:
+            if typed.get(name) is not None:
+                typed[name] = cipher.encrypt(str(typed[name]))  # type: ignore[attr-defined]
     return typed, rounded
 
 
